@@ -1,0 +1,23 @@
+{
+  "name": "inventario_general",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@sap/hana-client": "^2.28.19",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mssql": "^12.3.1",
+    "socket.io": "^4.8.3",
+    "sweetalert2": "^11.26.24"
+  }
+}

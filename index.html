@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Captura inventario</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Tabulator CSS -->
+    <link href="https://unpkg.com/tabulator-tables@6.2.1/dist/css/tabulator.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Full-screen Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="spinner"></div>
+        <p>Cargando información...</p>
+    </div>
+
+    <div class="main-container">
+        <div class="header-container">
+            <div class="brand-area">
+                <img src="logo_qb.png" alt="Logo" class="logo">
+                <h1>Captura inventario</h1>
+            </div>
+            <div class="actions">
+                <span id="sync-status" class="sync-status sync-connecting">Sync...</span>
+                <button id="btn-export" class="btn-primary">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Exportar a Excel (.xlsx)
+                </button>
+            </div>
+        </div>
+
+        <div class="scanner-section" style="position: relative;">
+            <div id="warning-peticiones" class="hidden" style="position: absolute; right: 30px; top: 25px; max-width: 340px; padding: 10px; background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; color: #991b1b; font-size: 0.9em; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <strong>Aviso:</strong> Hay peticiones sin atender.
+            </div>
+            <h2>Área de Escaneo</h2>
+            <small class="scanner-hint">El escáner automático pasará de Producto a Lote y agregará el registro directo a la tabla.</small>
+
+            <div class="area-controls">
+                <div class="input-group area-group">
+                    <label for="input-area">Área actual</label>
+                    <input type="text" id="input-area" placeholder="Ejemplo: A1" autocomplete="off">
+                </div>
+                <div class="input-group area-group">
+                    <label for="input-usuario">Usuario actual</label>
+                    <input type="text" id="input-usuario" placeholder="Ejemplo: Almacen1" autocomplete="off">
+                </div>
+                <button id="btn-set-area" class="btn-area">Asignar área</button>
+                <div class="area-badge-wrap">
+                    <span class="area-badge-label">Área activa:</span>
+                    <span id="current-area" class="area-badge">SIN AREA</span>
+                </div>
+            </div>
+            
+            <div class="scanner-inputs">
+                <div class="input-group">
+                    <label for="input-producto">1. Código de Producto</label>
+                    <input type="text" id="input-producto" placeholder="Escanea el código de producto..." autofocus autocomplete="off">
+                </div>
+                <div class="input-group">
+                    <label for="input-lote">2. Lote</label>
+                    <input type="text" id="input-lote" placeholder="Escanea el código de lote..." autocomplete="off">
+                </div>
+                <button id="btn-add" class="btn-add">
+                    <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    Agregar Manualmente
+                </button>
+            </div>
+        </div>
+
+        <div class="tabs-container">
+            <button id="tab-inventory" class="tab-btn active">Inventario</button>
+            <button id="tab-reserved" class="tab-btn">Reservados</button>
+            <button id="tab-peticiones" class="tab-btn">Peticiones</button>
+            <button id="tab-historial" class="tab-btn">Historial</button>
+        </div>
+
+        <div id="view-inventory" class="table-container">
+            <div class="table-search-bar">
+                <label for="input-search">Buscar</label>
+                <div class="table-search-actions">
+                    <input type="text" id="input-search" placeholder="Buscar por Ubicación, Producto, Nombre o Lote..." autocomplete="off">
+                </div>
+            </div>
+            <div id="inventory-table"></div>
+        </div>
+
+        <div id="view-peticiones" class="table-container hidden">
+            <div class="scanner-section" style="margin-bottom: 20px;">
+                <h2 style="color: var(--primary-color);">Nueva Petición de Tambos</h2>
+                <div class="scanner-inputs" style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
+                    <div class="input-group">
+                        <label for="pet-usuario">Usuario (Origen)</label>
+                        <input type="text" id="pet-usuario" placeholder="Ej. Almacén 1..." autocomplete="off">
+                    </div>
+                    <div class="input-group">
+                        <label for="pet-producto">Producto/Material</label>
+                        <input type="text" id="pet-producto" placeholder="Código o Nombre..." autocomplete="off">
+                    </div>
+                    <div class="input-group" style="max-width: 150px;">
+                        <label for="pet-cantidad">Cant. Tambos</label>
+                        <input type="number" id="pet-cantidad" value="1" min="1" autocomplete="off">
+                    </div>
+                    <button id="btn-add-peticion" class="btn-primary" style="height: 54px; align-self: flex-end; padding: 0 20px;">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right: 8px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        Pedir Material
+                    </button>
+                </div>
+            </div>
+            <div id="peticiones-table"></div>
+        </div>
+
+        <div id="view-historial" class="table-container hidden">
+            <div id="historial-table"></div>
+        </div>
+    </div>
+
+    <!-- Tabulator JS -->
+    <script type="text/javascript" src="https://unpkg.com/tabulator-tables@6.2.1/dist/js/tabulator.min.js"></script>
+
+    <!-- Socket.IO client for multi-device live sync -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- ExcelJS & FileSaver for stylized Excel export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    
+    <!-- SweetAlert2 for nice popups -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- App Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
