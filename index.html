@@ -4,12 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Captura inventario</title>
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <!-- Tabulator CSS -->
-    <link href="https://unpkg.com/tabulator-tables@6.2.1/dist/css/tabulator.min.css" rel="stylesheet">
+    <!-- Google Fonts: Inter — loaded async, falls back to system fonts if unavailable -->
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" as="style" onload="this.rel='stylesheet'" crossorigin>
+    <!-- Tabulator CSS (self-hosted) -->
+    <link href="vendor/tabulator.min.css" rel="stylesheet">
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
 </head>
@@ -121,19 +119,40 @@
         </div>
     </div>
 
-    <!-- Tabulator JS -->
-    <script type="text/javascript" src="https://unpkg.com/tabulator-tables@6.2.1/dist/js/tabulator.min.js"></script>
+    <!-- Tabulator JS (self-hosted) -->
+    <script defer src="vendor/tabulator.min.js"></script>
 
     <!-- Socket.IO client for multi-device live sync -->
-    <script src="/socket.io/socket.io.js"></script>
+    <script defer src="/socket.io/socket.io.js"></script>
     
-    <!-- ExcelJS & FileSaver for stylized Excel export -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <!-- ExcelJS & FileSaver for stylized Excel export (self-hosted) -->
+    <script defer src="vendor/exceljs.min.js"></script>
+    <script defer src="vendor/FileSaver.min.js"></script>
     
-    <!-- SweetAlert2 for nice popups -->
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- SweetAlert2 for nice popups (self-hosted) -->
+    <script defer src="vendor/sweetalert2.all.min.js"></script>
+
+    <!-- Error fallback: detect if critical dependencies are missing -->
+    <script>
+        window.addEventListener('DOMContentLoaded', function() {
+            // Give deferred scripts a moment to execute
+            setTimeout(function() {
+                if (typeof Tabulator === 'undefined' || typeof io === 'undefined') {
+                    var overlay = document.getElementById('loading-overlay');
+                    if (overlay) {
+                        overlay.classList.remove('hidden');
+                        overlay.innerHTML = '<div style="text-align:center;padding:40px;max-width:500px;">' +
+                            '<h1 style="color:#1a365d;margin-bottom:16px;">⚠️ Error de Carga</h1>' +
+                            '<p style="color:#2d3748;font-size:1.1em;margin-bottom:20px;">No se pudieron cargar las dependencias necesarias.<br>Verifica que el servidor esté corriendo correctamente.</p>' +
+                            '<button onclick="location.reload()" style="background:#1a365d;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:1em;cursor:pointer;">🔄 Recargar Página</button>' +
+                            '</div>';
+                    }
+                }
+            }, 3000);
+        });
+    </script>
+
     <!-- App Logic -->
-    <script src="app.js"></script>
+    <script defer src="app.js"></script>
 </body>
 </html>

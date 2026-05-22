@@ -1,4 +1,34 @@
 document.addEventListener("DOMContentLoaded", function () {
+    // Guard: ensure critical dependencies loaded before initializing
+    if (typeof Tabulator === 'undefined') {
+        console.error('Tabulator no está disponible. Verifica que vendor/tabulator.min.js se cargó correctamente.');
+        return;
+    }
+    if (typeof io === 'undefined') {
+        console.error('Socket.IO no está disponible. Verifica que /socket.io/socket.io.js se cargó correctamente.');
+        return;
+    }
+    if (typeof Swal === 'undefined') {
+        console.warn('SweetAlert2 no está disponible. Se usarán alertas nativas como fallback.');
+        window.Swal = { fire: function(opts) { alert(typeof opts === 'string' ? opts : (opts.title || '') + '\n' + (opts.text || '')); return Promise.resolve({ isConfirmed: false }); } };
+    }
+
+    try { _initApp(); } catch (err) {
+        console.error('Error fatal al inicializar la aplicación:', err);
+        var overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            overlay.classList.remove('hidden');
+            overlay.innerHTML = '<div style="text-align:center;padding:40px;max-width:500px;">' +
+                '<h1 style="color:#1a365d;margin-bottom:16px;">⚠️ Error de Inicialización</h1>' +
+                '<p style="color:#2d3748;font-size:1.1em;margin-bottom:12px;">Ocurrió un error al iniciar la aplicación.</p>' +
+                '<pre style="text-align:left;background:#f1f5f9;padding:12px;border-radius:8px;font-size:0.85em;overflow:auto;max-height:200px;">' + err.message + '</pre>' +
+                '<button onclick="location.reload()" style="margin-top:16px;background:#1a365d;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:1em;cursor:pointer;">🔄 Recargar Página</button>' +
+                '</div>';
+        }
+    }
+});
+
+function _initApp() {
     const socket = io();
 
     // 1. Initialize DOM Elements
@@ -30,6 +60,7 @@ document.addEventListener("DOMContentLoaded", function () {
     let pullTimer = null;
     let lastAppliedServerSignature = "";
     let currentTab = "inventory"; // "inventory" | "reserved" | "peticiones" | "historial"
+    let historialLoaded = false; // Lazy-load: only fetch historial when tab is first opened
 
     function setSyncStatus(state, text) {
         if (!syncStatus) {
@@ -179,9 +210,9 @@ document.addEventListener("DOMContentLoaded", function () {
     // 3. Initialize Tabulator Grid
     const table = new Tabulator("#inventory-table", {
         data: [],
+        height: "65vh", // Fixed height enables virtual DOM rendering (only visible rows in DOM)
         layout: "fitColumns",
         responsiveLayout: "hide",
-        history: true,
         groupBy: "Ubicacion",
         selectableRows: true,
         groupHeader: function(value, count, data, group){
@@ -381,8 +412,13 @@ document.addEventListener("DOMContentLoaded", function () {
                         await new Promise(resolve => setTimeout(resolve, 50));
 
                         try {
+                            const rowData = cell.getRow().getData();
                             await cell.getRow().delete();
-                            await syncInventoryDataToServer();
+                            await fetch(`/api/inventory/delete/${rowData.id}`, {
+                                method: "DELETE",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ usuario: activeUser })
+                            });
                         } catch (error) {
                             console.error("Error al eliminar:", error);
                             Swal.fire('Error', 'No se pudo eliminar el registro.', 'error');
@@ -497,21 +533,19 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    function queueSyncIfLocalChange() {
-        if (isApplyingRemoteData) {
-            return;
+    table.on("cellEdited", async function(cell) {
+        if (isApplyingRemoteData) return;
+        const rowData = cell.getRow().getData();
+        try {
+            await fetch("/api/inventory/update", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ row: rowData, usuario: activeUser })
+            });
+        } catch (error) {
+            console.error("Error al actualizar la celda:", error);
         }
-
-        if (isInventoryDeletionInProgress) {
-            return;
-        }
-
-        scheduleServerSync();
-    }
-
-    table.on("cellEdited", queueSyncIfLocalChange);
-    table.on("rowAdded", queueSyncIfLocalChange);
-    table.on("rowDeleted", queueSyncIfLocalChange);
+    });
 
     function applyGlobalSearch() {
         const term = (inputSearch.value || "").trim().toLowerCase();
@@ -556,7 +590,19 @@ document.addEventListener("DOMContentLoaded", function () {
     tabInventory?.addEventListener("click", () => setTab("inventory"));
     tabReserved?.addEventListener("click", () => setTab("reserved"));
     tabPeticiones?.addEventListener("click", () => setTab("peticiones"));
-    tabHistorial?.addEventListener("click", () => setTab("historial"));
+    tabHistorial?.addEventListener("click", () => {
+        setTab("historial");
+        // Lazy-load historial data on first click
+        if (!historialLoaded) {
+            historialLoaded = true;
+            fetch("/api/historial")
+                .then(r => r.json())
+                .then(payload => {
+                    historialTable.setData(Array.isArray(payload.historial) ? payload.historial : []);
+                })
+                .catch(err => console.error("Error cargando historial:", err));
+        }
+    });
 
     function setTab(tabName) {
         if (currentTab === tabName) return;
@@ -695,6 +741,25 @@ document.addEventListener("DOMContentLoaded", function () {
         setSyncStatus("sync-ok", "Sync OK");
     });
 
+    socket.on("inventory_row_added", async function (row) {
+        isApplyingRemoteData = true;
+        await table.updateOrAddData([row]);
+        isApplyingRemoteData = false;
+    });
+
+    socket.on("inventory_row_updated", async function (row) {
+        isApplyingRemoteData = true;
+        await table.updateOrAddData([row]);
+        isApplyingRemoteData = false;
+    });
+
+    socket.on("inventory_row_deleted", async function (id) {
+        isApplyingRemoteData = true;
+        await table.deleteRow(id).catch(e => console.log('Fila ya estaba eliminada', e));
+        isApplyingRemoteData = false;
+    });
+
+
     socket.on("area_sync", function (nextArea) {
         setActiveAreaFromServer(nextArea);
         setSyncStatus("sync-ok", "Sync OK");
@@ -710,7 +775,8 @@ document.addEventListener("DOMContentLoaded", function () {
             updatePendingRequestsWarning();
         }
 
-        if (payload.historial) {
+        // Historial is lazy-loaded: only apply if tab was already opened
+        if (payload.historial && historialLoaded) {
             historialTable.setData(payload.historial);
         }
 
@@ -740,7 +806,10 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     socket.on("historial_sync", function (historial) {
-        historialTable.setData(Array.isArray(historial) ? historial : []);
+        // Only update historial table if user has already opened the tab
+        if (historialLoaded) {
+            historialTable.setData(Array.isArray(historial) ? historial : []);
+        }
     });
 
     socket.on("nueva_peticion", function (peticion) {
@@ -767,6 +836,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     socket.io.on("reconnect", function () {
         setSyncStatus("sync-ok", "Sync OK");
+        loadInventoryFromServer(false); // Refrescar en caso de desconexion
     });
 
     // 5. Function to add new scanned row
@@ -828,7 +898,15 @@ document.addEventListener("DOMContentLoaded", function () {
             Comentarios: "",
         };
 
-        table.addData([newRow], true);
+        // Optimistic UI update for immediate feedback
+        table.updateOrAddData([newRow]);
+        
+        // Send delta to server
+        fetch("/api/inventory/add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ row: newRow, usuario: activeUser })
+        }).catch(err => console.error("Error al agregar fila:", err));
 
         inputProducto.value = "";
         inputLote.value = "";
@@ -1028,8 +1106,8 @@ document.addEventListener("DOMContentLoaded", function () {
         petUsuarioInput.value = activeUser;
     }
 
-    loadInventoryFromServer(true);
-    pullTimer = setInterval(() => loadInventoryFromServer(false), 15000);
+    // Initial data is loaded via Socket.IO bootstrap_sync event (no need for separate HTTP fetch)
+    // loadInventoryFromServer is only used for reconnection scenarios
     inputProducto.focus();
     updatePendingRequestsWarning();
-});
+}

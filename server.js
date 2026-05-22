@@ -6,6 +6,7 @@ const fsPromises = fs.promises;
 const http = require('http');
 const sql = require('mssql');
 const cors = require('cors');
+const compression = require('compression');
 const { Server } = require('socket.io');
 
 const app = express();
@@ -142,15 +143,43 @@ let peticionesData = loadPeticionesData();
 let historialData = loadHistorialData();
 let activeArea = loadActiveArea();
 
+let saveTimer = null;
+function debouncedSaveInventory() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+        saveInventoryData(inventoryData).catch(console.error);
+    }, 1000);
+}
+
+app.use(compression({
+    // Skip compression for Socket.IO requests to avoid corrupting WebSocket/long-polling
+    filter: (req, res) => {
+        if (req.url && req.url.startsWith('/socket.io')) {
+            return false;
+        }
+        return compression.filter(req, res);
+    }
+}));
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
+
+// Disable caching for HTML, JS, CSS so browsers always get fresh files
+app.use((req, res, next) => {
+    const url = (req.url || '').toLowerCase();
+    if (url.endsWith('.html') || url.endsWith('.js') || url.endsWith('.css') || url === '/') {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.set('Pragma', 'no-cache');
+    }
+    next();
+});
 app.use(express.static(__dirname)); // Sirve index.html, style.css y app.js
 
 io.on('connection', (socket) => {
+    // Send initial data — historial is lazy-loaded by the client, so we skip it here
+    // to reduce the bootstrap payload from ~435KB to ~35KB
     socket.emit('bootstrap_sync', {
         data: inventoryData,
         peticiones: peticionesData,
-        historial: historialData,
         activeArea,
     });
 });
@@ -226,8 +255,8 @@ app.put('/api/inventory', (req, res) => {
 
     const previousCount = inventoryData.length;
     inventoryData = nextData;
-    // Dispara el guardado en segundo plano (RAM primero, HDD despues) para respuesta instantánea
-    saveInventoryData(inventoryData).catch(console.error);
+    // Dispara el guardado debounced para evitar saturar el disco
+    debouncedSaveInventory();
     registerHistorialEvent(
         'Inventario actualizado',
         actor,
@@ -236,6 +265,73 @@ app.put('/api/inventory', (req, res) => {
     io.emit('inventory_sync', inventoryData);
 
     res.json({ ok: true, count: inventoryData.length });
+});
+
+app.post('/api/inventory/add', (req, res) => {
+    const { row, usuario } = req.body;
+    if (!row || !row.id) {
+        return res.status(400).json({ error: 'Faltan datos de la fila' });
+    }
+    
+    // Check if it exists (in case of double submission)
+    const existingIndex = inventoryData.findIndex(r => r.id === row.id);
+    if (existingIndex >= 0) {
+        inventoryData[existingIndex] = row;
+    } else {
+        inventoryData.push(row);
+    }
+    
+    debouncedSaveInventory();
+    
+    registerHistorialEvent(
+        'Producto capturado',
+        usuario,
+        `Se agregó ${row.Producto} - ${row.Nombre || 'Sin Nombre'} (Lote: ${row.Lote})`
+    );
+    
+    // Emitir solo a los demas clientes si usamos optimistic updates, o a todos.
+    // Usaremos io.emit para simplificar. El cliente ignorara el update si ya lo tiene (gracias a updateOrAddData de Tabulator).
+    io.emit('inventory_row_added', row);
+    res.json({ ok: true });
+});
+
+app.put('/api/inventory/update', (req, res) => {
+    const { row, usuario } = req.body;
+    if (!row || !row.id) {
+        return res.status(400).json({ error: 'Faltan datos de la fila' });
+    }
+    
+    const existingIndex = inventoryData.findIndex(r => String(r.id) === String(row.id));
+    if (existingIndex >= 0) {
+        inventoryData[existingIndex] = row;
+        debouncedSaveInventory();
+        
+        io.emit('inventory_row_updated', row);
+        return res.json({ ok: true });
+    }
+    res.status(404).json({ error: 'Fila no encontrada' });
+});
+
+app.delete('/api/inventory/delete/:id', (req, res) => {
+    const id = req.params.id; // Tabulator IDs might be string or number
+    const { usuario } = req.body;
+    
+    const existingIndex = inventoryData.findIndex(r => String(r.id) === String(id));
+    if (existingIndex >= 0) {
+        const deletedRow = inventoryData[existingIndex];
+        inventoryData.splice(existingIndex, 1);
+        debouncedSaveInventory();
+        
+        registerHistorialEvent(
+            'Producto eliminado',
+            usuario,
+            `Se eliminó ${deletedRow.Producto} (Lote: ${deletedRow.Lote})`
+        );
+        
+        io.emit('inventory_row_deleted', id);
+        return res.json({ ok: true });
+    }
+    res.status(404).json({ error: 'Fila no encontrada' });
 });
 
 app.get('/api/active-area', (_req, res) => {
