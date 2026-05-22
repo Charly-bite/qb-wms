@@ -1,2 +1,15 @@
 node_modules/
 .env
+
+# Runtime data files (never commit — each server has its own data)
+inventory-data.json
+historial-data.json
+peticiones-data.json
+active-area.txt
+
+# Backup / temp files
+logo_qb_original.png
+temp.js
+test_load.js
+test_server.js
+_test_server_temp.js
