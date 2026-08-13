@@ -6,11 +6,13 @@ const fsPromises = fs.promises;
 const http = require('http');
 const sql = require('mssql');
 const cors = require('cors');
+const os = require('os');
 const compression = require('compression');
 const { Server } = require('socket.io');
 
 const app = express();
 const PORT = 5002;
+const SERVER_START_TIME = Date.now();
 const HOST = '192.168.2.218'; // Tu IP asignada para el servidor local
 const DATA_FILE = path.join(__dirname, 'inventory-data.json');
 const PETICIONES_FILE = path.join(__dirname, 'peticiones-data.json');
@@ -303,8 +305,20 @@ app.put('/api/inventory/update', (req, res) => {
     
     const existingIndex = inventoryData.findIndex(r => String(r.id) === String(row.id));
     if (existingIndex >= 0) {
+        const oldRow = inventoryData[existingIndex];
         inventoryData[existingIndex] = row;
         debouncedSaveInventory();
+        
+        // Registrar el evento en el historial
+        let actionMsg = 'Producto editado';
+        let detailMsg = `Se editó ${row.Producto} (Lote: ${row.Lote})`;
+        
+        if (Boolean(oldRow.Reservado) !== Boolean(row.Reservado)) {
+            actionMsg = row.Reservado ? 'Producto reservado' : 'Reserva cancelada';
+            detailMsg = `Se ${row.Reservado ? 'reservó' : 'quitó la reserva de'} ${row.Producto} (Lote: ${row.Lote})`;
+        }
+        
+        registerHistorialEvent(actionMsg, usuario, detailMsg);
         
         io.emit('inventory_row_updated', row);
         return res.json({ ok: true });
@@ -384,17 +398,25 @@ const poolConnect = dbPool.connect().catch(err => {
     console.error('Error conectando inicialmente a SQL Server:', err);
 });
 
+// Asegurar la reconexión automática a la base de datos si se cae
+async function ensureDbConnected() {
+    if (!dbPool.connected && !dbPool.connecting) {
+        console.log('SQL Server no conectado. Intentando reconectar...');
+        try {
+            await dbPool.connect();
+            console.log('Conexión a SQL Server reestablecida con éxito.');
+        } catch (err) {
+            console.error('Error en reconexión a SQL Server:', err.message);
+        }
+    }
+}
+
 // API Endpoint: Consultar el nombre del producto en SQL Server
 app.get('/api/product/:code', async (req, res) => {
     const productCode = req.params.code;
-
-    // Solo consultar para codigos IFF. Para el resto no se intenta conexion.
-    if (!/^IFF/i.test(String(productCode || '').trim())) {
-        return res.json({ name: '', source: 'skip_non_iff' });
-    }
     
     try {
-        await poolConnect; // asegurar que el pool este conectado
+        await ensureDbConnected();
         
         const request = dbPool.request();
         request.input('code', sql.NVarChar, productCode);
@@ -412,6 +434,58 @@ app.get('/api/product/:code', async (req, res) => {
         console.error("Error en la consulta de SQL Server:", err.message);
         return res.json({ name: '', source: 'query_error' });
     }
+});
+
+// ─── Monitor / Health endpoint for external Control Panel ───
+app.get('/api/monitor/health', async (_req, res) => {
+    const now = new Date();
+
+    // 1. Server uptime & memory
+    const uptimeSeconds = Math.floor((Date.now() - SERVER_START_TIME) / 1000);
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const memoryUsedMB = Math.round((usedMem / (1024 * 1024)) * 100) / 100;
+    const memoryTotalMB = Math.round((totalMem / (1024 * 1024)) * 100) / 100;
+    const memoryPercent = Math.round((usedMem / totalMem) * 10000) / 100; // two decimals
+
+    // 2. Database connection check
+    let dbStatus = 'disconnected';
+    let dbLastChecked = now.toISOString();
+    try {
+        await ensureDbConnected();
+        const request = dbPool.request();
+        await request.query('SELECT 1');
+        dbStatus = 'connected';
+    } catch (_err) {
+        dbStatus = 'disconnected';
+    }
+    dbLastChecked = new Date().toISOString();
+
+    // 3. Entries captured today (inventory rows whose timestamp-id falls within today)
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const entriesToday = inventoryData.filter(row => {
+        const ts = Number(row.id);
+        return !isNaN(ts) && ts >= todayStart;
+    }).length;
+
+    res.json({
+        status: 'ok',
+        timestamp: now.toISOString(),
+        server: {
+            uptimeSeconds,
+            memoryUsedMB,
+            memoryTotalMB,
+            memoryPercent,
+        },
+        database: {
+            status: dbStatus,
+            lastChecked: dbLastChecked,
+        },
+        metrics: {
+            entriesToday,
+        },
+    });
 });
 
 httpServer.listen(PORT, HOST, () => {

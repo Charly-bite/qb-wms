@@ -13,3 +13,8 @@ temp.js
 test_load.js
 test_server.js
 _test_server_temp.js
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class

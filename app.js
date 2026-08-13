@@ -174,9 +174,7 @@ function _initApp() {
         return digits ? Number(digits) : NaN;
     }
 
-    function shouldQuerySapName(productCode) {
-        return /^IFF/i.test(String(productCode || "").trim());
-    }
+
 
     function updatePendingRequestsWarning() {
         if (!warningPeticiones) {
@@ -309,8 +307,8 @@ function _initApp() {
                     await new Promise(resolve => setTimeout(resolve, 50));
 
                     try {
-                        // Deletions in Tabulator are fast, but we can wrap them to ensure UI responsiveness
-                        await Promise.all(selectedRows.map(row => row.delete()));
+                        const idsToDelete = selectedRows.map(row => row.getIndex());
+                        await table.deleteRow(idsToDelete);
                         await syncInventoryDataToServer();
                         
                         Swal.fire({
@@ -340,7 +338,29 @@ function _initApp() {
         columns: [
             {
                 formatter: "rowSelection",
-                titleFormatter: function() { return ""; }, // Elimina el checkbox maestro del header global
+                titleFormatter: function() {
+                    const checkbox = document.createElement("input");
+                    checkbox.type = "checkbox";
+                    checkbox.className = "global-select-all-checkbox";
+                    checkbox.style.cssText = "width: 16px; height: 16px; cursor: pointer; display: block; margin: 0 auto;";
+                    checkbox.title = "Seleccionar todos los filtrados";
+                    
+                    checkbox.addEventListener("click", function(e) {
+                        e.stopPropagation();
+                    });
+                    
+                    checkbox.addEventListener("change", function(e) {
+                        const isChecked = e.target.checked;
+                        const activeRows = table.getRows("active");
+                        if (isChecked) {
+                            activeRows.forEach(row => row.select());
+                        } else {
+                            activeRows.forEach(row => row.deselect());
+                        }
+                    });
+                    
+                    return checkbox;
+                },
                 hozAlign: "center",
                 headerSort: false,
                 resizable: false,
@@ -547,10 +567,34 @@ function _initApp() {
         }
     });
 
-    function applyGlobalSearch() {
-        const term = (inputSearch.value || "").trim().toLowerCase();
+    function cleanStr(s) {
+        if (!s) return "";
+        return String(s)
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
+    }
 
-        if (!term) {
+    function compactStr(s) {
+        return cleanStr(s).replace(/[\s\-_./\\]/g, "");
+    }
+
+    function parseSearchTokens(rawTerm) {
+        const cleaned = cleanStr(rawTerm);
+        // Normalize location codes like "17 b", "17-b", "a 1" into "17b", "a1"
+        const normalizedCodes = cleaned
+            .replace(/\b(\d+)\s*[\-_]?\s*([a-z])\b/gi, "$1$2")
+            .replace(/\b([a-z])\s*[\-_]?\s*(\d+)\b/gi, "$1$2");
+
+        const tokens = normalizedCodes.split(/\s+/).filter(Boolean);
+        const compactTokens = tokens.map(t => compactStr(t)).filter(Boolean);
+        return { tokens, compactTokens, rawCompact: compactStr(rawTerm) };
+    }
+
+    function applyGlobalSearch() {
+        const rawTerm = (inputSearch.value || "").trim();
+
+        if (!rawTerm) {
             table.setGroupBy("Ubicacion");
             table.setFilter(function (rowData) {
                 const isReserved = Boolean(rowData.Reservado);
@@ -561,6 +605,8 @@ function _initApp() {
             table.clearSort();
             return;
         }
+
+        const { tokens, compactTokens, rawCompact } = parseSearchTokens(rawTerm);
 
         table.setGroupBy(false);
         table.setSort([
@@ -573,17 +619,45 @@ function _initApp() {
             if (currentTab === "inventory" && isReserved) return false;
             if (currentTab === "reserved" && !isReserved) return false;
 
-            const ubicacion = String(rowData.Ubicacion || "").toLowerCase();
-            const producto = String(rowData.Producto || "").toLowerCase();
-            const nombre = String(rowData.Nombre || "").toLowerCase();
-            const lote = String(rowData.Lote || "").toLowerCase();
+            const ubicacion = cleanStr(rowData.Ubicacion);
+            const producto = cleanStr(rowData.Producto);
+            const nombre = cleanStr(rowData.Nombre);
+            const lote = cleanStr(rowData.Lote);
+            const comentarios = cleanStr(rowData.Comentarios);
 
-            return (
-                ubicacion.includes(term) ||
-                producto.includes(term) ||
-                nombre.includes(term) ||
-                lote.includes(term)
-            );
+            const compactUbicacion = compactStr(rowData.Ubicacion);
+            const compactProducto = compactStr(rowData.Producto);
+            const compactNombre = compactStr(rowData.Nombre);
+            const compactLote = compactStr(rowData.Lote);
+            const compactComentarios = compactStr(rowData.Comentarios);
+
+            // 1. Direct compact match for single-field matches (exact location match e.g. "2b" or partial match on product/name/lote/comments)
+            if (rawCompact && (
+                compactUbicacion === rawCompact ||
+                compactProducto.includes(rawCompact) ||
+                compactNombre.includes(rawCompact) ||
+                compactLote.includes(rawCompact) ||
+                compactComentarios.includes(rawCompact)
+            )) {
+                return true;
+            }
+
+            // 2. Tokenized multi-word search (every token must match at least one field: exact for Ubicacion, partial for other fields)
+            return tokens.length > 0 && tokens.every((token, idx) => {
+                const compactToken = compactTokens[idx] || token;
+                return (
+                    compactUbicacion === compactToken ||
+                    ubicacion === token ||
+                    producto.includes(token) ||
+                    compactProducto.includes(compactToken) ||
+                    nombre.includes(token) ||
+                    compactNombre.includes(compactToken) ||
+                    lote.includes(token) ||
+                    compactLote.includes(compactToken) ||
+                    comentarios.includes(token) ||
+                    compactComentarios.includes(compactToken)
+                );
+            });
         });
     }
 
@@ -853,10 +927,10 @@ function _initApp() {
             return;
         }
 
-        // Solo consultamos SAP para productos IFF.
+        // Consultar nombre del producto en la base de datos (para cualquier codigo)
         let nombreProducto = "";
-        if (shouldQuerySapName(prodVal)) {
-            // Validar si ya escaneamos este producto antes (para re-usar su nombre cuando SAP este fallando por fines de semana)
+        {
+            // Validar si ya escaneamos este producto antes (para re-usar su nombre cuando la BD no este disponible)
             const localData = table.getData();
             const prevOccurence = localData.find(r => 
                 String(r.Producto).trim().toUpperCase() === prodVal.toUpperCase() && 
@@ -951,6 +1025,82 @@ function _initApp() {
     });
 
     inputSearch.addEventListener("input", applyGlobalSearch);
+
+    // Global delete selected button logic
+    const btnDeleteSelected = document.getElementById("btn-delete-selected");
+    
+    function updateDeleteButtonAndHeader() {
+        const activeRows = table.getRows("active");
+        const selectedActiveRows = activeRows.filter(r => r.isSelected());
+        
+        if (btnDeleteSelected) {
+            const count = selectedActiveRows.length;
+            btnDeleteSelected.disabled = count === 0;
+            btnDeleteSelected.textContent = count > 0 ? `❌ Eliminar Seleccionados (${count})` : "❌ Eliminar Seleccionados";
+        }
+
+        const masterCb = document.querySelector(".global-select-all-checkbox");
+        if (masterCb) {
+            if (activeRows.length === 0) {
+                masterCb.checked = false;
+                masterCb.indeterminate = false;
+            } else {
+                const selectedActiveCount = selectedActiveRows.length;
+                masterCb.checked = selectedActiveCount === activeRows.length;
+                masterCb.indeterminate = selectedActiveCount > 0 && selectedActiveCount < activeRows.length;
+            }
+        }
+    }
+
+    if (btnDeleteSelected) {
+        btnDeleteSelected.addEventListener("click", async function () {
+            const activeRows = table.getRows("active");
+            const selectedActiveRows = activeRows.filter(r => r.isSelected());
+            if (selectedActiveRows.length === 0) return;
+
+            const result = await Swal.fire({
+                title: '¿Confirmar eliminación?',
+                text: `¿Estás seguro de que deseas eliminar ${selectedActiveRows.length} registro(s) SELECCIONADO(S) de todas las áreas?`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#f44336',
+                cancelButtonColor: '#718096',
+                confirmButtonText: 'Sí, eliminar',
+                cancelButtonText: 'Cancelar'
+            });
+
+            if (result.isConfirmed) {
+                loadingOverlay.classList.remove("hidden");
+                isInventoryDeletionInProgress = true;
+
+                // Pequeña espera para permitir que el navegador pinte el overlay
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                try {
+                    const idsToDelete = selectedActiveRows.map(row => row.getIndex());
+                    await table.deleteRow(idsToDelete);
+                    await syncInventoryDataToServer();
+
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Eliminados',
+                        text: 'Los registros han sido eliminados correctamente.',
+                        timer: 2000,
+                        showConfirmButton: false
+                    });
+                } catch (error) {
+                    console.error("Error al eliminar seleccionados:", error);
+                    Swal.fire('Error', 'No se pudieron eliminar todos los registros.', 'error');
+                } finally {
+                    isInventoryDeletionInProgress = false;
+                    loadingOverlay.classList.add("hidden");
+                }
+            }
+        });
+    }
+
+    table.on("rowSelectionChanged", updateDeleteButtonAndHeader);
+    table.on("dataFiltered", updateDeleteButtonAndHeader);
 
     // 7. Actions Bar
     btnExport.addEventListener("click", async function () {

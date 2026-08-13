@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor Analítico - Tiempos de Pedido</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="background-elements">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <main class="dashboard">
+        <header class="header glass">
+            <div class="header-content">
+                <h1>Analítica de Desempeño</h1>
+                <p>Tiempo de procesamiento para pedidos de 10 productos</p>
+            </div>
+            <div class="stats-container">
+                <div class="stat-box">
+                    <span class="stat-label">Total Pedidos</span>
+                    <span class="stat-value" id="totalPedidos">-</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Tiempo Promedio</span>
+                    <span class="stat-value" id="tiempoPromedio">-</span>
+                </div>
+            </div>
+        </header>
+
+        <nav class="tabs-nav" style="display: flex; gap: 10px; margin-bottom: 20px;">
+            <button class="tab-btn active" data-tab="tab-invoice" style="flex: 1; padding: 15px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; color: var(--text-main); font-weight: 600; cursor: pointer; transition: all 0.3s; font-family: 'Inter', sans-serif;">Surtido por Factura</button>
+            <button class="tab-btn" data-tab="tab-shipping" style="flex: 1; padding: 15px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; color: var(--text-main); font-weight: 600; cursor: pointer; transition: all 0.3s; opacity: 0.7; font-family: 'Inter', sans-serif;">SGA vs SAP (Envasado)</button>
+            <button class="tab-btn" data-tab="tab-10prod" style="flex: 1; padding: 15px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; color: var(--text-main); font-weight: 600; cursor: pointer; transition: all 0.3s; opacity: 0.7; font-family: 'Inter', sans-serif;">Procesar 10 Productos</button>
+            <button class="tab-btn" data-tab="tab-product" style="flex: 1; padding: 15px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; color: var(--text-main); font-weight: 600; cursor: pointer; transition: all 0.3s; opacity: 0.7; font-family: 'Inter', sans-serif;">Envasado por Tipo</button>
+        </nav>
+
+        <section class="charts-container glass" style="padding: 20px;">
+            <!-- TAB 1: Surtido por Factura -->
+            <div id="tab-invoice" class="tab-content active">
+                <div class="chart-box" style="border: none; background: transparent; padding: 0;">
+                    <div class="chart-header" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 15px; gap: 15px;">
+                        <h2>Tiempo de Surtido por Factura</h2>
+                        <div class="glass-panel filters-panel" style="display: flex; gap: 15px; align-items: center; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 10px 15px; border-radius: 12px; flex-wrap: wrap;">
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Max Minutos</label>
+                                <input type="number" id="maxInvoiceTime" value="180" step="10" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; width: 80px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; transition: border 0.2s;">
+                            </div>
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Agrupar Cada</label>
+                                <select id="binSize" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="auto">Automático</option>
+                                    <option value="5">5 min</option>
+                                    <option value="15">15 min</option>
+                                    <option value="30">30 min</option>
+                                    <option value="60">60 min</option>
+                                </select>
+                            </div>
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Orientación</label>
+                                <select id="chartOrientation" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="x">Vertical (Eje X: Tiempo)</option>
+                                    <option value="y">Horizontal (Eje Y: Tiempo)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper" style="height: 400px; position: relative;">
+                        <canvas id="invoiceChart"></canvas>
+                    </div>
+                    <div class="stats-mini" style="margin-top: 15px;">
+                        <span>Facturas analizadas: <strong id="totalInvoices">-</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: Envasado (SGA vs SAP) -->
+            <div id="tab-shipping" class="tab-content" style="display: none;">
+                <div class="chart-box" style="border: none; background: transparent; padding: 0;">
+                    <div class="chart-header" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 15px; gap: 15px;">
+                        <h2>Tiempos de Envasado (SGA vs Remisión)</h2>
+                        <div class="glass-panel filters-panel" style="display: flex; gap: 15px; align-items: center; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 10px 15px; border-radius: 12px; flex-wrap: wrap;">
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Max Minutos</label>
+                                <input type="number" id="maxShippingTime" value="180" step="10" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; width: 80px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; transition: border 0.2s;">
+                            </div>
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Agrupar Cada</label>
+                                <select id="shippingBinSize" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="auto">Automático</option>
+                                    <option value="5">5 min</option>
+                                    <option value="15">15 min</option>
+                                    <option value="30">30 min</option>
+                                    <option value="60">60 min</option>
+                                </select>
+                            </div>
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Orientación</label>
+                                <select id="shippingOrientation" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="x">Vertical (Eje X: Tiempo)</option>
+                                    <option value="y">Horizontal (Eje Y: Tiempo)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Average Time Banner -->
+                    <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 15px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px;">
+                        <div style="font-size: 32px; font-weight: 800; color: #10b981;" id="shippingAvgTime">- min</div>
+                        <div style="color: var(--text-muted); font-size: 14px;"><strong>Promedio Real de Envasado</strong><br/>Calculado excluyendo valores atípicos (mayores a <span id="shippingLimitLabel">180</span> min)</div>
+                    </div>
+
+                    <div class="chart-wrapper" style="height: 350px; position: relative;">
+                        <canvas id="shippingChart"></canvas>
+                    </div>
+                    <div class="stats-mini" style="margin-top: 15px;">
+                        <span>Cruces analizados: <strong id="totalCruces">-</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: 10 Productos -->
+            <div id="tab-10prod" class="tab-content" style="display: none;">
+                <div class="chart-box" style="border: none; background: transparent; padding: 0;">
+                    <div class="chart-header" style="margin-bottom: 15px;">
+                        <h2>Tiempo en Procesar 10 Productos</h2>
+                    </div>
+                    <div class="chart-wrapper" style="height: 400px; position: relative;">
+                        <canvas id="histogramChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+
+
+            <!-- TAB 4: Envasado por Producto -->
+            <div id="tab-product" class="tab-content" style="display: none;">
+                <div class="chart-box" style="border: none; background: transparent; padding: 0;">
+                    <div class="chart-header" style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 15px; gap: 15px;">
+                        <h2>Envasado por Tipo de Producto</h2>
+                        <div class="glass-panel filters-panel" style="display: flex; gap: 15px; align-items: center; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); padding: 10px 15px; border-radius: 12px; flex-wrap: wrap;">
+                            
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Tipo de Producto</label>
+                                <select id="productTypeFilter" style="background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.5); color: white; border-radius: 6px; padding: 6px 10px; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: bold; outline: none; cursor: pointer;">
+                                    <option value="TODOS">TODOS</option>
+                                </select>
+                            </div>
+
+                            <div class="filter-control" style="display: flex; flex-direction: column; gap: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Max Minutos</label>
+                                <input type="number" id="maxProductTime" value="180" step="10" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 6px; padding: 6px 10px; width: 80px; font-family: 'Inter', sans-serif; font-size: 13px; outline: none; transition: border 0.2s;">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Average Time Banner -->
+                    <div style="background: rgba(236, 72, 153, 0.1); border: 1px solid rgba(236, 72, 153, 0.3); border-radius: 12px; padding: 15px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px;">
+                        <div style="font-size: 32px; font-weight: 800; color: #ec4899;" id="productAvgTime">- min</div>
+                        <div style="color: var(--text-muted); font-size: 14px;"><strong>Promedio Dinámico (<span id="productLabelSelected">TODOS</span>)</strong><br/>Excluyendo mayores a <span id="productLimitLabel">180</span> min</div>
+                    </div>
+
+                    <div class="chart-wrapper" style="height: 350px; position: relative;">
+                        <canvas id="productChart"></canvas>
+                    </div>
+                    <div class="stats-mini" style="margin-top: 15px;">
+                        <span>Cruces analizados: <strong id="totalProductCruces">-</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="loading" class="loading-state">
+                <div class="spinner"></div>
+                <p>Analizando datos históricos y cruzando con SAP...</p>
+            </div>
+            <div id="error" class="error-state hidden">
+                <p>Ocurrió un error al cargar los datos.</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
