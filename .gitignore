@@ -6,6 +6,12 @@ inventory-data.json
 historial-data.json
 peticiones-data.json
 active-area.txt
+boxes-data.json
+locations-data.json
+movements-data.json
+*-data.json
+*.data.json
+
 
 # Backup / temp files
 logo_qb_original.png

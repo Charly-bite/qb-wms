@@ -11,9 +11,9 @@ const compression = require('compression');
 const { Server } = require('socket.io');
 
 const app = express();
-const PORT = 5002;
+const PORT = process.env.PORT || 5002;
 const SERVER_START_TIME = Date.now();
-const HOST = '192.168.2.218'; // Tu IP asignada para el servidor local
+const HOST = process.env.HOST || '0.0.0.0'; // Escucha en todas las interfaces de red (192.168.2.222 / localhost)
 const DATA_FILE = path.join(__dirname, 'inventory-data.json');
 const PETICIONES_FILE = path.join(__dirname, 'peticiones-data.json');
 const HISTORIAL_FILE = path.join(__dirname, 'historial-data.json');
@@ -121,20 +121,20 @@ function registerHistorialEvent(action, actor, details) {
 function loadActiveArea() {
     try {
         if (!fs.existsSync(ACTIVE_AREA_FILE)) {
-            return 'A1';
+            return '1A';
         }
 
         const raw = fs.readFileSync(ACTIVE_AREA_FILE, 'utf8').trim();
-        return raw || 'A1';
+        return raw || '1A';
     } catch (error) {
         console.error('No se pudo leer active-area.txt:', error.message);
-        return 'A1';
+        return '1A';
     }
 }
 
 async function saveActiveArea(area) {
     try {
-        await fsPromises.writeFile(ACTIVE_AREA_FILE, String(area || 'A1'), 'utf8');
+        await fsPromises.writeFile(ACTIVE_AREA_FILE, String(area || '1A'), 'utf8');
     } catch (error) {
         console.error('No se pudo guardar active-area.txt:', error.message);
     }
@@ -348,6 +348,47 @@ app.delete('/api/inventory/delete/:id', (req, res) => {
     res.status(404).json({ error: 'Fila no encontrada' });
 });
 
+app.post('/api/inventory/delete-area', (req, res) => {
+    const { area, deleteProducts, newArea, usuario } = req.body;
+    const cleanArea = String(area || '').trim().toUpperCase();
+    if (!cleanArea) return res.status(400).json({ error: 'Área requerida' });
+
+    let affectedCount = 0;
+    if (deleteProducts) {
+        // Delete all products in this area
+        const initialCount = inventoryData.length;
+        inventoryData = inventoryData.filter(r => String(r.Ubicacion).trim().toUpperCase() !== cleanArea);
+        affectedCount = initialCount - inventoryData.length;
+    } else if (newArea) {
+        // Reassign products to newArea
+        const cleanNew = String(newArea).trim().toUpperCase();
+        inventoryData.forEach(r => {
+            if (String(r.Ubicacion).trim().toUpperCase() === cleanArea) {
+                r.Ubicacion = cleanNew;
+                affectedCount++;
+            }
+        });
+    }
+
+    debouncedSaveInventory();
+
+    // If activeArea was the deleted area, switch it
+    if (activeArea === cleanArea) {
+        activeArea = newArea ? String(newArea).trim().toUpperCase() : '1A';
+        saveActiveArea(activeArea).catch(console.error);
+        io.emit('area_sync', activeArea);
+    }
+
+    registerHistorialEvent(
+        'Ubicación eliminada',
+        usuario,
+        `Se eliminó "${cleanArea}" (${affectedCount} productos ${deleteProducts ? 'eliminados' : 'movidos a ' + newArea})`
+    );
+
+    io.emit('inventory_sync', inventoryData);
+    res.json({ ok: true, affectedCount, activeArea });
+});
+
 app.get('/api/active-area', (_req, res) => {
     res.json({ activeArea });
 });
@@ -394,8 +435,19 @@ const sqlConfig = {
 
 // Crear un pool de conexiones para reutilizar
 const dbPool = new sql.ConnectionPool(sqlConfig);
+dbPool.on('error', err => {
+    console.error('SQL Pool Error (resiliente):', err.message);
+});
 const poolConnect = dbPool.connect().catch(err => {
-    console.error('Error conectando inicialmente a SQL Server:', err);
+    console.error('Error conectando inicialmente a SQL Server:', err.message);
+});
+
+// Manejadores globales para evitar caída del proceso por errores asíncronos
+process.on('uncaughtException', (err) => {
+    console.error('Excepción no capturada atrapada:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Promesa rechazada no manejada:', reason);
 });
 
 // Asegurar la reconexión automática a la base de datos si se cae
@@ -437,6 +489,10 @@ app.get('/api/product/:code', async (req, res) => {
 });
 
 // ─── Monitor / Health endpoint for external Control Panel ───
+app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.get('/api/monitor/health', async (_req, res) => {
     const now = new Date();
 
@@ -491,7 +547,8 @@ app.get('/api/monitor/health', async (_req, res) => {
 httpServer.listen(PORT, HOST, () => {
     console.log(`===============================================`);
     console.log(`Servidor de Captura de Inventario Iniciado`);
-    console.log(`>> Accesible en: http://${HOST}:${PORT}/`);
+    console.log(`>> Accesible en LAN: http://192.168.2.222:${PORT}/`);
+    console.log(`>> Localhost:       http://localhost:${PORT}/`);
     console.log(`>> Sync en tiempo real habilitado para varios equipos`);
     console.log(`===============================================`);
 });
