@@ -34,7 +34,9 @@ function _initApp() {
     // 1. Initialize DOM Elements
     const inputProducto = document.getElementById("input-producto");
     const inputLote = document.getElementById("input-lote");
-    const inputArea = document.getElementById("input-area");
+    const selectArea = document.getElementById("select-area"); // hidden input
+    const selectAreaSearch = document.getElementById("select-area-search");
+    const dropdownSelectArea = document.getElementById("dropdown-select-area");
     const inputUsuario = document.getElementById("input-usuario");
     const btnSetArea = document.getElementById("btn-set-area");
     const currentAreaBadge = document.getElementById("current-area");
@@ -48,12 +50,56 @@ function _initApp() {
     const tabHistorial = document.getElementById("tab-historial");
     const warningPeticiones = document.getElementById("warning-peticiones");
     const loadingOverlay = document.getElementById("loading-overlay");
+    const btnDeleteArea = document.getElementById("btn-delete-area");
+
+    // Modal DOM Elements
+    const scannerModal = document.getElementById("scanner-modal");
+    const btnOpenScannerModal = document.getElementById("btn-open-scanner-modal");
+    const modalBtnClose = document.getElementById("modal-btn-close");
+    const modalBtnDone = document.getElementById("modal-btn-done");
+    const modalInputProducto = document.getElementById("modal-input-producto");
+    const modalInputLote = document.getElementById("modal-input-lote");
+    const modalInputKg = document.getElementById("modal-input-kg");
+    const modalSelectArea = document.getElementById("modal-select-area"); // hidden input
+    const modalSelectAreaSearch = document.getElementById("modal-select-area-search");
+    const dropdownModalSelectArea = document.getElementById("dropdown-modal-select-area");
+    const modalBtnDeleteArea = document.getElementById("modal-btn-delete-area");
+    const modalBadgeUser = document.getElementById("modal-badge-user");
+    const modalBtnAdd = document.getElementById("modal-btn-add");
+    const modalBtnClearSession = document.getElementById("modal-btn-clear-session");
+    const modalScannedTbody = document.getElementById("modal-scanned-tbody");
+    const modalEmptyState = document.getElementById("modal-empty-state");
+    const modalSessionCount = document.getElementById("modal-session-count");
+    const modalFooterArea = document.getElementById("modal-footer-area");
+    const modalFooterTotal = document.getElementById("modal-footer-total");
+    const modalFeedbackBar = document.getElementById("modal-feedback-bar");
+    const modalFeedbackText = document.getElementById("modal-feedback-text");
+    const stepColProducto = document.getElementById("step-col-producto");
+    const stepColLote = document.getElementById("step-col-lote");
+
+    // Safe Storage helper (handles SecurityError when localStorage is partitioned or blocked)
+    const memStorage = {};
+    function safeStorageGet(key, defaultVal = "") {
+        try {
+            const val = localStorage.getItem(key);
+            return val !== null ? val : defaultVal;
+        } catch (e) {
+            return memStorage[key] !== undefined ? memStorage[key] : defaultVal;
+        }
+    }
+
+    function safeStorageSet(key, val) {
+        try {
+            localStorage.setItem(key, val);
+        } catch (e) {}
+        memStorage[key] = val;
+    }
 
     // 2. State
     const ACTIVE_AREA_KEY = "active_area";
     const ACTIVE_USER_KEY = "active_user";
-    let activeArea = normalizeArea(localStorage.getItem(ACTIVE_AREA_KEY) || "A1");
-    let activeUser = normalizeUser(localStorage.getItem(ACTIVE_USER_KEY) || "Almacen1");
+    let activeArea = normalizeArea(safeStorageGet(ACTIVE_AREA_KEY, "PRUEBA"));
+    let activeUser = normalizeUser(safeStorageGet(ACTIVE_USER_KEY, "Almacen1"));
     let isApplyingRemoteData = false;
     let isInventoryDeletionInProgress = false;
     let syncTimer = null;
@@ -61,6 +107,508 @@ function _initApp() {
     let lastAppliedServerSignature = "";
     let currentTab = "inventory"; // "inventory" | "reserved" | "peticiones" | "historial"
     let historialLoaded = false; // Lazy-load: only fetch historial when tab is first opened
+    let sessionScannedRows = []; // Products scanned during active session
+    let isScannerModalOpen = false;
+    let modalFeedbackTimer = null;
+
+    const DEFAULT_LOCATIONS = (() => {
+        const locs = ["PRUEBA"];
+        const letters = ["A", "B", "C", "D", "E", "F"];
+        for (const letter of letters) {
+            for (let n = 1; n <= 100; n++) {
+                locs.push(n + letter);
+            }
+        }
+        return locs;
+    })();
+
+    function getDeletedLocations() {
+        try {
+            const d = JSON.parse(safeStorageGet("deleted_locations", "[]"));
+            return Array.isArray(d) ? d.map(x => String(x).trim().toUpperCase()) : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function getAvailableLocations() {
+        const deletedLocs = getDeletedLocations();
+        const locSet = new Set(DEFAULT_LOCATIONS);
+        
+        // Add custom locations saved in storage
+        try {
+            const customLocs = JSON.parse(safeStorageGet("custom_locations", "[]"));
+            if (Array.isArray(customLocs)) {
+                customLocs.forEach(loc => {
+                    if (loc && String(loc).trim()) locSet.add(String(loc).trim().toUpperCase());
+                });
+            }
+        } catch (e) {}
+
+        // Add any unique locations from table data
+        if (typeof table !== "undefined" && table && table.getData) {
+            try {
+                const data = table.getData();
+                data.forEach(r => {
+                    if (r.Ubicacion && String(r.Ubicacion).trim()) {
+                        locSet.add(String(r.Ubicacion).trim().toUpperCase());
+                    }
+                });
+            } catch (e) {}
+        }
+
+        if (activeArea) locSet.add(activeArea);
+
+        // Filter out deleted locations blacklist
+        deletedLocs.forEach(d => {
+            locSet.delete(d);
+        });
+
+        return Array.from(locSet).sort((a, b) => {
+            if (a === "PRUEBA") return -1;
+            if (b === "PRUEBA") return 1;
+
+            // Group by letter, then by numeric prefix (e.g. 1A, 2A.. 100A, then 1B, 2B.. 100B)
+            const matchA = String(a).match(/^(\d+)([A-Z]+)$/);
+            const matchB = String(b).match(/^(\d+)([A-Z]+)$/);
+
+            if (matchA && matchB) {
+                if (matchA[2] === matchB[2]) {
+                    return Number(matchA[1]) - Number(matchB[1]);
+                }
+                return matchA[2].localeCompare(matchB[2]);
+            }
+            return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+        });
+    }
+
+    function removeLocationFromStorage(loc) {
+        const cleanLoc = String(loc).trim().toUpperCase();
+        
+        // 1. Remove from custom_locations
+        try {
+            let customLocs = JSON.parse(safeStorageGet("custom_locations", "[]"));
+            customLocs = customLocs.filter(l => String(l).trim().toUpperCase() !== cleanLoc);
+            safeStorageSet("custom_locations", JSON.stringify(customLocs));
+        } catch (e) {}
+
+        // 2. Add to deleted_locations blacklist
+        try {
+            let deletedLocs = getDeletedLocations();
+            if (!deletedLocs.includes(cleanLoc)) {
+                deletedLocs.push(cleanLoc);
+                safeStorageSet("deleted_locations", JSON.stringify(deletedLocs));
+            }
+        } catch (e) {}
+
+        // 3. Switch activeArea if it was the deleted location
+        if (activeArea === cleanLoc) {
+            const remaining = getAvailableLocations();
+            activeArea = remaining[0] || "PRUEBA";
+            safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+            renderActiveArea();
+            pushActiveAreaToServer(activeArea);
+        } else {
+            populateLocationSelects();
+        }
+    }
+
+    async function promptDeleteLocation(sourceSelect) {
+        const targetLoc = (sourceSelect ? sourceSelect.value : activeArea) || activeArea;
+        if (!targetLoc || targetLoc === "__NEW_LOCATION__") {
+            Swal.fire({
+                icon: 'info',
+                title: 'Selecciona una ubicación',
+                text: 'Por favor selecciona la ubicación que deseas eliminar.',
+                confirmButtonColor: '#1a365d'
+            });
+            return;
+        }
+
+        // Check if there are rows in inventory with this location
+        const allRows = (typeof table !== "undefined" && table && table.getData) ? table.getData() : [];
+        const affectedRows = allRows.filter(r => String(r.Ubicacion).trim().toUpperCase() === targetLoc.toUpperCase());
+
+        if (affectedRows.length > 0) {
+            const result = await Swal.fire({
+                title: `¿Eliminar "${targetLoc}"?`,
+                html: `<div style="text-align: left; padding: 5px;">
+                         <p style="color: #b91c1c; font-weight: bold; margin-bottom: 8px;">⚠️ Hay <b>${affectedRows.length} producto(s)</b> registrados en esta ubicación.</p>
+                         <p style="font-size: 0.95em; color: #4b5563; margin-bottom: 0;">¿Deseas mover estos productos a otra área o eliminarlos junto con la ubicación?</p>
+                       </div>`,
+                icon: 'warning',
+                showDenyButton: true,
+                showCancelButton: true,
+                confirmButtonText: '📦 Mover a otra área',
+                denyButtonText: '🗑️ Eliminar productos y área',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#1a365d',
+                denyButtonColor: '#dc2626',
+                cancelButtonColor: '#64748b'
+            });
+
+            if (result.isConfirmed) {
+                // Reassign products to a different area
+                const remainingLocs = getAvailableLocations().filter(l => l !== targetLoc);
+                const inputOptions = {};
+                remainingLocs.forEach(l => { inputOptions[l] = l; });
+
+                const { value: newDestination } = await Swal.fire({
+                    title: 'Selecciona el área destino',
+                    text: `¿A qué ubicación deseas mover los ${affectedRows.length} productos de "${targetLoc}"?`,
+                    input: 'select',
+                    inputOptions: inputOptions,
+                    inputPlaceholder: 'Selecciona una ubicación...',
+                    showCancelButton: true,
+                    confirmButtonColor: '#1a365d',
+                    inputValidator: (val) => !val ? 'Debes seleccionar una ubicación destino' : undefined
+                });
+
+                if (newDestination) {
+                    await fetch("/api/inventory/delete-area", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ area: targetLoc, deleteProducts: false, newArea: newDestination, usuario: activeUser })
+                    }).catch(console.error);
+
+                    removeLocationFromStorage(targetLoc);
+                    activeArea = newDestination;
+                    safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+                    renderActiveArea();
+                    applyGlobalSearch();
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Ubicación Reasignada y Eliminada',
+                        text: `Se movieron ${affectedRows.length} producto(s) a "${newDestination}" y se eliminó "${targetLoc}".`,
+                        timer: 2500,
+                        showConfirmButton: false
+                    });
+                }
+            } else if (result.isDenied) {
+                // Delete products and location atomically on server
+                await fetch("/api/inventory/delete-area", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ area: targetLoc, deleteProducts: true, usuario: activeUser })
+                }).catch(console.error);
+
+                removeLocationFromStorage(targetLoc);
+                applyGlobalSearch();
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Ubicación y Productos Eliminados',
+                    text: `Se eliminó "${targetLoc}" y sus ${affectedRows.length} productos.`,
+                    timer: 2500,
+                    showConfirmButton: false
+                });
+            }
+        } else {
+            // No products in location: direct confirmation
+            const confirmDelete = await Swal.fire({
+                title: `¿Eliminar ubicación "${targetLoc}"?`,
+                text: `Esta ubicación está vacía y se removerá de los selectores.`,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Sí, eliminar',
+                cancelButtonText: 'Cancelar',
+                confirmButtonColor: '#dc2626',
+                cancelButtonColor: '#64748b'
+            });
+
+            if (confirmDelete.isConfirmed) {
+                await fetch("/api/inventory/delete-area", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ area: targetLoc, deleteProducts: true, usuario: activeUser })
+                }).catch(console.error);
+
+                removeLocationFromStorage(targetLoc);
+                showModalFeedback(`🗑️ Ubicación "${targetLoc}" eliminada`);
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Ubicación Eliminada',
+                    text: `Se eliminó "${targetLoc}" correctamente.`,
+                    timer: 1800,
+                    showConfirmButton: false
+                });
+            }
+        }
+    }
+
+    async function promptAddNewLocation(sourceSelect) {
+        const { value: newLoc, isConfirmed } = await Swal.fire({
+            title: '📍 Nueva Ubicación',
+            text: 'Escribe el nombre o código de la nueva área / tarima:',
+            input: 'text',
+            inputPlaceholder: 'Ejemplo: C1 T18, D3, REVISIÓN...',
+            showCancelButton: true,
+            confirmButtonText: 'Guardar y Asignar',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#1a365d',
+            cancelButtonColor: '#718096',
+            inputValidator: (value) => {
+                if (!value || !value.trim()) {
+                    return 'Debes escribir una ubicación válida';
+                }
+            }
+        });
+
+        if (isConfirmed && newLoc && newLoc.trim()) {
+            const cleanLoc = newLoc.trim().toUpperCase();
+            
+            // Remove from deleted_locations if previously deleted
+            try {
+                let deletedLocs = getDeletedLocations();
+                deletedLocs = deletedLocs.filter(l => l !== cleanLoc);
+                localStorage.setItem("deleted_locations", JSON.stringify(deletedLocs));
+            } catch (e) {}
+
+            let customLocs = [];
+            try {
+                customLocs = JSON.parse(localStorage.getItem("custom_locations") || "[]");
+            } catch (e) {
+                customLocs = [];
+            }
+            if (!customLocs.includes(cleanLoc)) {
+                customLocs.push(cleanLoc);
+                localStorage.setItem("custom_locations", JSON.stringify(customLocs));
+            }
+
+            activeArea = cleanLoc;
+            localStorage.setItem(ACTIVE_AREA_KEY, activeArea);
+            renderActiveArea();
+            pushActiveAreaToServer(activeArea);
+            showModalFeedback(`✅ Nueva ubicación asignada: ${cleanLoc}`);
+        } else {
+            // Revert dropdown selection to current activeArea
+            if (sourceSelect) {
+                sourceSelect.value = activeArea;
+            }
+        }
+    }
+
+    // ---- Searchable Select Combobox Engine ----
+    function initSearchableSelect(hiddenInput, searchInput, dropdown, onChange) {
+        if (!hiddenInput || !searchInput || !dropdown) return null;
+
+        let allOptions = []; // [{value, label, isAction}]
+        let highlightedIdx = -1;
+        let isOpen = false;
+
+        function renderDropdown(filter) {
+            dropdown.innerHTML = "";
+            const query = (filter || "").trim().toUpperCase();
+            let filtered = allOptions.filter(o => !o.isAction && o.label.toUpperCase().includes(query));
+
+            // Limit rendered items for performance (600 locations)
+            const MAX_VISIBLE = 80;
+            const truncated = filtered.length > MAX_VISIBLE;
+            if (truncated) filtered = filtered.slice(0, MAX_VISIBLE);
+
+            if (filtered.length === 0 && !query) {
+                filtered = allOptions.filter(o => !o.isAction).slice(0, MAX_VISIBLE);
+            }
+
+            filtered.forEach((opt, idx) => {
+                const div = document.createElement("div");
+                div.className = "searchable-select-option" + (opt.value === hiddenInput.value ? " selected" : "");
+                div.textContent = opt.label;
+                div.dataset.value = opt.value;
+                div.dataset.idx = idx;
+                div.addEventListener("mousedown", (e) => {
+                    e.preventDefault();
+                    selectOption(opt.value, opt.label);
+                });
+                dropdown.appendChild(div);
+            });
+
+            if (filtered.length === 0) {
+                const noRes = document.createElement("div");
+                noRes.className = "searchable-select-no-results";
+                noRes.textContent = "Sin resultados para \"" + (filter || "") + "\"";
+                dropdown.appendChild(noRes);
+            }
+
+            if (truncated) {
+                const more = document.createElement("div");
+                more.className = "searchable-select-no-results";
+                more.textContent = "Escribe para refinar...";
+                dropdown.appendChild(more);
+            }
+
+            // Add action option
+            const actionOpts = allOptions.filter(o => o.isAction);
+            actionOpts.forEach(opt => {
+                const div = document.createElement("div");
+                div.className = "searchable-select-option action-option";
+                div.textContent = opt.label;
+                div.dataset.value = opt.value;
+                div.addEventListener("mousedown", (e) => {
+                    e.preventDefault();
+                    selectOption(opt.value, opt.label);
+                });
+                dropdown.appendChild(div);
+            });
+
+            highlightedIdx = -1;
+        }
+
+        function selectOption(value, label) {
+            closeDropdown();
+            if (value === "__NEW_LOCATION__") {
+                searchInput.value = hiddenInput.value || activeArea;
+                if (onChange) onChange(value);
+                return;
+            }
+            hiddenInput.value = value;
+            searchInput.value = value;
+            if (onChange) onChange(value);
+        }
+
+        function openDropdown() {
+            if (isOpen) return;
+            isOpen = true;
+            renderDropdown(searchInput.value);
+            dropdown.classList.add("open");
+        }
+
+        function closeDropdown() {
+            isOpen = false;
+            dropdown.classList.remove("open");
+            highlightedIdx = -1;
+        }
+
+        searchInput.addEventListener("focus", () => {
+            searchInput.select();
+            openDropdown();
+        });
+
+        searchInput.addEventListener("input", () => {
+            openDropdown();
+            renderDropdown(searchInput.value);
+        });
+
+        searchInput.addEventListener("blur", () => {
+            // Delay to allow mousedown on option
+            setTimeout(() => {
+                closeDropdown();
+                // If user typed something that is not a valid option, revert
+                const typed = (searchInput.value || "").trim().toUpperCase();
+                const match = allOptions.find(o => o.value === typed && !o.isAction);
+                if (match) {
+                    hiddenInput.value = match.value;
+                    searchInput.value = match.value;
+                    if (onChange) onChange(match.value);
+                } else {
+                    // Revert to current hidden value
+                    searchInput.value = hiddenInput.value || "";
+                }
+            }, 180);
+        });
+
+        searchInput.addEventListener("keydown", (e) => {
+            const items = dropdown.querySelectorAll(".searchable-select-option");
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                if (!isOpen) { openDropdown(); return; }
+                highlightedIdx = Math.min(highlightedIdx + 1, items.length - 1);
+                updateHighlight(items);
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                highlightedIdx = Math.max(highlightedIdx - 1, 0);
+                updateHighlight(items);
+            } else if (e.key === "Enter" || e.key === "Tab") {
+                if (isOpen && highlightedIdx >= 0 && highlightedIdx < items.length) {
+                    e.preventDefault();
+                    items[highlightedIdx].dispatchEvent(new MouseEvent("mousedown"));
+                } else if (isOpen) {
+                    // Auto-select first visible match if user typed something
+                    const firstItem = dropdown.querySelector(".searchable-select-option:not(.action-option)");
+                    if (firstItem) {
+                        e.preventDefault();
+                        firstItem.dispatchEvent(new MouseEvent("mousedown"));
+                    }
+                }
+            } else if (e.key === "Escape") {
+                closeDropdown();
+                searchInput.value = hiddenInput.value || "";
+            }
+        });
+
+        function updateHighlight(items) {
+            items.forEach((it, i) => {
+                it.classList.toggle("highlighted", i === highlightedIdx);
+            });
+            if (items[highlightedIdx]) {
+                items[highlightedIdx].scrollIntoView({ block: "nearest" });
+            }
+        }
+
+        return {
+            setOptions(opts) {
+                allOptions = opts;
+            },
+            setValue(val) {
+                hiddenInput.value = val;
+                searchInput.value = val;
+            },
+            getValue() {
+                return hiddenInput.value;
+            }
+        };
+    }
+
+    // ---- Searchable select instances ----
+    const searchableMain = initSearchableSelect(selectArea, selectAreaSearch, dropdownSelectArea, (val) => {
+        if (val === "__NEW_LOCATION__") {
+            promptAddNewLocation({ value: selectArea.value, _isSearchable: true });
+            return;
+        }
+        const nextArea = normalizeArea(val);
+        if (nextArea) {
+            activeArea = nextArea;
+            safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+            renderActiveArea();
+            pushActiveAreaToServer(activeArea);
+        }
+    });
+
+    const searchableModal = initSearchableSelect(modalSelectArea, modalSelectAreaSearch, dropdownModalSelectArea, (val) => {
+        if (val === "__NEW_LOCATION__") {
+            promptAddNewLocation({ value: modalSelectArea.value, _isSearchable: true });
+            return;
+        }
+        const nextArea = normalizeArea(val);
+        if (nextArea) {
+            activeArea = nextArea;
+            safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+            renderActiveArea();
+            pushActiveAreaToServer(activeArea);
+            if (modalFooterArea) modalFooterArea.textContent = activeArea;
+            updateSessionLocations(nextArea);
+        }
+    });
+
+    function populateLocationSelects() {
+        const deletedLocs = getDeletedLocations();
+        const locations = getAvailableLocations();
+        let currentSelected = activeArea;
+        if (deletedLocs.includes(currentSelected)) {
+            currentSelected = locations[0] || "PRUEBA";
+        }
+
+        const opts = locations.map(loc => ({ value: loc, label: loc, isAction: false }));
+        opts.push({ value: "__NEW_LOCATION__", label: "➕ Añadir nueva ubicación...", isAction: true });
+
+        if (searchableMain) {
+            searchableMain.setOptions(opts);
+            searchableMain.setValue(currentSelected);
+        }
+        if (searchableModal) {
+            searchableModal.setOptions(opts);
+            searchableModal.setValue(currentSelected);
+        }
+    }
 
     function setSyncStatus(state, text) {
         if (!syncStatus) {
@@ -116,7 +664,7 @@ function _initApp() {
         }
 
         activeUser = nextUser;
-        localStorage.setItem(ACTIVE_USER_KEY, activeUser);
+        safeStorageSet(ACTIVE_USER_KEY, activeUser);
 
         const petUsuarioInput = document.getElementById("pet-usuario");
         if (petUsuarioInput && !petUsuarioInput.value.trim()) {
@@ -126,33 +674,33 @@ function _initApp() {
 
     function renderActiveArea() {
         currentAreaBadge.textContent = activeArea || "SIN AREA";
-        inputArea.value = activeArea;
+        populateLocationSelects();
+        if (modalFooterArea) modalFooterArea.textContent = activeArea;
     }
 
     function setActiveArea() {
-        const nextArea = normalizeArea(inputArea.value);
+        const nextArea = normalizeArea(selectArea ? selectArea.value : "");
         if (!nextArea) {
-            alert("Debes ingresar un area valida. Ejemplo: A1");
-            inputArea.focus();
+            alert("Debes seleccionar un área válida.");
             return false;
         }
 
         activeArea = nextArea;
-        localStorage.setItem(ACTIVE_AREA_KEY, activeArea);
+        safeStorageSet(ACTIVE_AREA_KEY, activeArea);
         renderActiveArea();
         pushActiveAreaToServer(activeArea);
-        inputProducto.focus();
+        inputProducto?.focus();
         return true;
     }
 
     function syncAreaFromInputSilently() {
-        const nextArea = normalizeArea(inputArea.value);
+        const nextArea = normalizeArea(selectArea ? selectArea.value : "");
         if (!nextArea || nextArea === activeArea) {
             return;
         }
 
         activeArea = nextArea;
-        localStorage.setItem(ACTIVE_AREA_KEY, activeArea);
+        safeStorageSet(ACTIVE_AREA_KEY, activeArea);
         renderActiveArea();
         pushActiveAreaToServer(activeArea);
     }
@@ -164,7 +712,7 @@ function _initApp() {
         }
 
         activeArea = nextArea;
-        localStorage.setItem(ACTIVE_AREA_KEY, activeArea);
+        safeStorageSet(ACTIVE_AREA_KEY, activeArea);
         renderActiveArea();
     }
 
@@ -255,11 +803,11 @@ function _initApp() {
             });
             
             const titleSpan = document.createElement("span");
-            titleSpan.style.cssText = "font-weight:bold; color:#1a365d;";
+            titleSpan.style.cssText = "font-weight: 800; color: #ffffff; background-color: #1e3a8a; padding: 3px 10px; border-radius: 6px; font-size: 0.85rem; letter-spacing: 0.02em;";
             titleSpan.textContent = `Área: ${printValue}`;
             
             const countSpan = document.createElement("span");
-            countSpan.style.cssText = "font-size:12px; background:#e2e8f0; padding:2px 8px; border-radius:12px; color:#333;";
+            countSpan.style.cssText = "font-size: 0.78rem; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 2px 9px; border-radius: 999px; border: 1px solid #bae6fd;";
             countSpan.textContent = `${count} Productos`;
             
             leftDiv.appendChild(cb);
@@ -270,8 +818,10 @@ function _initApp() {
             
             const delBtn = document.createElement("button");
             delBtn.className = "group-delete-selected-btn";
-            delBtn.style.cssText = "color: white; background-color: #f44336; border: none; border-radius: 4px; padding: 4px 8px; margin-left: 15px; cursor: pointer; font-weight: bold; font-size: 11px;";
-            delBtn.textContent = "❌ Eliminar Seleccionados";
+            delBtn.style.cssText = "color: #dc2626; background-color: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 3px 10px; margin-left: 15px; cursor: pointer; font-weight: 700; font-size: 0.75rem; transition: all 0.15s ease;";
+            delBtn.textContent = "🗑️ Eliminar Seleccionados";
+            delBtn.onmouseover = () => { delBtn.style.backgroundColor = "#ef4444"; delBtn.style.color = "#ffffff"; };
+            delBtn.onmouseout = () => { delBtn.style.backgroundColor = "#fee2e2"; delBtn.style.color = "#dc2626"; };
             
             delBtn.addEventListener("click", async function(e) {
                 e.stopPropagation();
@@ -407,9 +957,9 @@ function _initApp() {
             {
                 title: "❌",
                 formatter: function () {
-                    return "<button tabindex='-1' style='color: white; background-color: #f44336; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-weight: bold;'>X</button>";
+                    return "<button tabindex='-1' style='color: #dc2626; background-color: #fee2e2; border: 1px solid #fca5a5; border-radius: 4px; padding: 2px 7px; cursor: pointer; font-weight: bold; font-size: 0.8rem; transition: all 0.15s ease;'>✕</button>";
                 },
-                width: 60,
+                width: 50,
                 hozAlign: "center",
                 headerSort: false,
                 cellClick: async function (_e, cell) {
@@ -468,9 +1018,9 @@ function _initApp() {
             {
                 title: "❌",
                 formatter: function () {
-                    return "<button tabindex='-1' style='color: white; background-color: #f44336; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-weight: bold;'>X</button>";
+                    return "<button tabindex='-1' style='color: #dc2626; background-color: #fee2e2; border: 1px solid #fca5a5; border-radius: 4px; padding: 2px 7px; cursor: pointer; font-weight: bold; font-size: 0.8rem; transition: all 0.15s ease;'>✕</button>";
                 },
-                width: 60,
+                width: 50,
                 hozAlign: "center",
                 headerSort: false,
                 cellClick: function (_e, cell) {
@@ -631,31 +1181,38 @@ function _initApp() {
             const compactLote = compactStr(rowData.Lote);
             const compactComentarios = compactStr(rowData.Comentarios);
 
-            // 1. Direct compact match for single-field matches (exact location match e.g. "2b" or partial match on product/name/lote/comments)
+            const cleanedTerm = cleanStr(rawTerm);
+
+            // 1. Direct match on any field (full or partial, compact or normalized)
             if (rawCompact && (
-                compactUbicacion === rawCompact ||
+                compactUbicacion.includes(rawCompact) ||
+                ubicacion.includes(cleanedTerm) ||
                 compactProducto.includes(rawCompact) ||
+                producto.includes(cleanedTerm) ||
                 compactNombre.includes(rawCompact) ||
+                nombre.includes(cleanedTerm) ||
                 compactLote.includes(rawCompact) ||
-                compactComentarios.includes(rawCompact)
+                lote.includes(cleanedTerm) ||
+                compactComentarios.includes(rawCompact) ||
+                comentarios.includes(cleanedTerm)
             )) {
                 return true;
             }
 
-            // 2. Tokenized multi-word search (every token must match at least one field: exact for Ubicacion, partial for other fields)
+            // 2. Tokenized multi-word search (every token must match at least one field)
             return tokens.length > 0 && tokens.every((token, idx) => {
                 const compactToken = compactTokens[idx] || token;
                 return (
-                    compactUbicacion === compactToken ||
-                    ubicacion === token ||
-                    producto.includes(token) ||
+                    compactUbicacion.includes(compactToken) ||
+                    ubicacion.includes(token) ||
                     compactProducto.includes(compactToken) ||
-                    nombre.includes(token) ||
+                    producto.includes(token) ||
                     compactNombre.includes(compactToken) ||
-                    lote.includes(token) ||
+                    nombre.includes(token) ||
                     compactLote.includes(compactToken) ||
-                    comentarios.includes(token) ||
-                    compactComentarios.includes(compactToken)
+                    lote.includes(token) ||
+                    compactComentarios.includes(compactToken) ||
+                    comentarios.includes(token)
                 );
             });
         });
@@ -819,18 +1376,23 @@ function _initApp() {
         isApplyingRemoteData = true;
         await table.updateOrAddData([row]);
         isApplyingRemoteData = false;
+        applyGlobalSearch();
+        populateLocationSelects();
     });
 
     socket.on("inventory_row_updated", async function (row) {
         isApplyingRemoteData = true;
         await table.updateOrAddData([row]);
         isApplyingRemoteData = false;
+        applyGlobalSearch();
+        populateLocationSelects();
     });
 
     socket.on("inventory_row_deleted", async function (id) {
         isApplyingRemoteData = true;
         await table.deleteRow(id).catch(e => console.log('Fila ya estaba eliminada', e));
         isApplyingRemoteData = false;
+        applyGlobalSearch();
     });
 
 
@@ -913,10 +1475,369 @@ function _initApp() {
         loadInventoryFromServer(false); // Refrescar en caso de desconexion
     });
 
-    // 5. Function to add new scanned row
+    // =========================================================================
+    // POP-UP / MODAL REAL-TIME SCANNING ENGINE
+    // =========================================================================
+
+    // 5. Audio feedback with Web Audio API (no external file needed)
+    function playConfirmationBeep() {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz (A5)
+            osc.frequency.exponentialRampToValueAtTime(1174.66, ctx.currentTime + 0.08); // 1174Hz (D6)
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.16);
+        } catch (e) {
+            // Audio context can fail gracefully without throwing
+        }
+    }
+
+    function showModalFeedback(text, isError = false) {
+        if (!modalFeedbackBar || !modalFeedbackText) return;
+        if (modalFeedbackTimer) clearTimeout(modalFeedbackTimer);
+
+        modalFeedbackText.textContent = text;
+        modalFeedbackBar.style.backgroundColor = isError ? "#fef2f2" : "#ecfdf5";
+        modalFeedbackBar.style.borderLeftColor = isError ? "#ef4444" : "#10b981";
+        modalFeedbackBar.style.color = isError ? "#991b1b" : "#065f46";
+        modalFeedbackBar.classList.remove("hidden");
+
+        modalFeedbackTimer = setTimeout(() => {
+            modalFeedbackBar.classList.add("hidden");
+            modalFeedbackTimer = null;
+        }, 3500);
+    }
+
+    function setModalStep(step) {
+        if (step === 1) {
+            stepColProducto?.classList.add("active");
+            stepColLote?.classList.remove("active");
+        } else if (step === 2) {
+            stepColProducto?.classList.remove("active");
+            stepColLote?.classList.add("active");
+        }
+    }
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function renderSessionTable() {
+        if (!modalScannedTbody || !modalEmptyState) return;
+
+        const count = sessionScannedRows.length;
+        if (modalSessionCount) {
+            modalSessionCount.textContent = `${count} escaneado${count === 1 ? "" : "s"}`;
+        }
+        if (modalFooterTotal) {
+            modalFooterTotal.textContent = `${count} tambo${count === 1 ? "" : "s"}`;
+        }
+
+        if (count === 0) {
+            modalEmptyState.classList.remove("hidden");
+            modalScannedTbody.innerHTML = "";
+            return;
+        }
+
+        modalEmptyState.classList.add("hidden");
+
+        let html = "";
+        sessionScannedRows.forEach((row, index) => {
+            const isLatest = index === 0;
+            html += `
+                <tr class="${isLatest ? 'newly-scanned' : ''}">
+                    <td class="cell-index">${count - index}</td>
+                    <td class="cell-time">${row._scannedAt || '--:--'}</td>
+                    <td><span class="cell-area-badge">${escapeHtml(row.Ubicacion || activeArea)}</span></td>
+                    <td class="cell-prod-code">${escapeHtml(row.Producto)}</td>
+                    <td class="cell-prod-name">${escapeHtml(row.Nombre || 'Sin Nombre')}</td>
+                    <td><span class="cell-lote-badge">${escapeHtml(row.Lote)}</span></td>
+                    <td class="cell-kg">${row.KG ?? 25} kg</td>
+                    <td style="text-align: center;">
+                        <button class="btn-del-scanned" data-row-id="${row.id}" title="Eliminar este escaneo">❌</button>
+                    </td>
+                </tr>
+            `;
+        });
+
+        modalScannedTbody.innerHTML = html;
+
+        // Attach event listeners for delete buttons
+        modalScannedTbody.querySelectorAll(".btn-del-scanned").forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                const rowId = e.currentTarget.getAttribute("data-row-id");
+                await deleteRowFromSession(rowId);
+            });
+        });
+    }
+
+    async function deleteRowFromSession(rowId) {
+        const targetRow = sessionScannedRows.find(r => String(r.id) === String(rowId));
+        if (!targetRow) return;
+
+        const result = await Swal.fire({
+            title: '¿Eliminar registro?',
+            text: `¿Deseas eliminar ${targetRow.Producto} (Lote: ${targetRow.Lote}) de la sesión e inventario?`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#f44336',
+            cancelButtonColor: '#718096',
+            confirmButtonText: 'Sí, eliminar',
+            cancelButtonText: 'Cancelar'
+        });
+
+        if (result.isConfirmed) {
+            sessionScannedRows = sessionScannedRows.filter(r => String(r.id) !== String(rowId));
+            renderSessionTable();
+
+            try {
+                await table.deleteRow(rowId).catch(e => console.log('Fila ya no existía en tabla:', e));
+                await fetch(`/api/inventory/delete/${rowId}`, {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ usuario: activeUser })
+                });
+                showModalFeedback(`🗑️ Se eliminó ${targetRow.Producto} (Lote: ${targetRow.Lote})`);
+            } catch (err) {
+                console.error("Error al eliminar fila desde modal:", err);
+            }
+
+            modalInputProducto?.focus();
+        }
+    }
+
+    function updateSessionLocations(newArea) {
+        const cleanArea = normalizeArea(newArea);
+        if (!cleanArea || sessionScannedRows.length === 0) return;
+
+        // Update all rows in current session
+        sessionScannedRows.forEach(r => {
+            r.Ubicacion = cleanArea;
+            fetch("/api/inventory/update", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ row: r, usuario: activeUser })
+            }).catch(e => console.error("Error al actualizar ubicación de fila:", e));
+        });
+
+        // Update Tabulator table
+        table.updateOrAddData(sessionScannedRows);
+        renderSessionTable();
+        showModalFeedback(`📍 Ubicación de ${sessionScannedRows.length} tambo(s) actualizada a: ${cleanArea}`);
+    }
+
+    function openScannerModal(initialProduct = "") {
+        isScannerModalOpen = true;
+        scannerModal?.classList.remove("hidden");
+
+        if (modalBadgeUser) modalBadgeUser.textContent = activeUser;
+        populateLocationSelects();
+        if (searchableModal) searchableModal.setValue(activeArea);
+        if (modalFooterArea) modalFooterArea.textContent = activeArea;
+
+        renderSessionTable();
+
+        if (initialProduct) {
+            if (modalInputProducto) modalInputProducto.value = initialProduct;
+            if (modalInputLote) modalInputLote.value = "";
+            setModalStep(2);
+            setTimeout(() => modalInputLote?.focus(), 50);
+        } else {
+            if (modalInputProducto) modalInputProducto.value = "";
+            if (modalInputLote) modalInputLote.value = "";
+            setModalStep(1);
+            setTimeout(() => modalInputProducto?.focus(), 50);
+        }
+    }
+
+    function closeScannerModal(isFinalizing = true) {
+        const totalSavedInSession = sessionScannedRows.length;
+
+        isScannerModalOpen = false;
+        scannerModal?.classList.add("hidden");
+
+        // Sync modal area if user changed it in dropdown
+        if (modalSelectArea) {
+            const nextArea = normalizeArea(modalSelectArea.value);
+            if (nextArea && nextArea !== activeArea && nextArea !== "__NEW_LOCATION__") {
+                activeArea = nextArea;
+                safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+                renderActiveArea();
+                pushActiveAreaToServer(activeArea);
+            }
+        }
+
+        // Reset session state for the next scan batch
+        if (isFinalizing) {
+            sessionScannedRows = [];
+            renderSessionTable();
+            if (modalInputProducto) modalInputProducto.value = "";
+            if (modalInputLote) modalInputLote.value = "";
+            setModalStep(1);
+
+            // Re-apply search filter & refresh location dropdowns
+            applyGlobalSearch();
+            populateLocationSelects();
+
+            if (totalSavedInSession > 0) {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Captura Finalizada',
+                    text: `Se registraron ${totalSavedInSession} tambo(s) en la ubicación ${activeArea}.`,
+                    timer: 2200,
+                    showConfirmButton: false
+                });
+            }
+        }
+
+        inputProducto?.focus();
+    }
+
+    async function queryProductName(prodVal) {
+        if (!prodVal) return "";
+        // 1. Re-use local in-memory table data if present (instant)
+        const localData = (typeof table !== "undefined" && table && table.getData) ? table.getData() : [];
+        const prevOccurence = localData.find(r => 
+            String(r.Producto).trim().toUpperCase() === prodVal.toUpperCase() && 
+            String(r.Nombre).trim() !== ""
+        );
+
+        if (prevOccurence) {
+            return prevOccurence.Nombre;
+        }
+
+        // 2. Fetch from DB endpoint with fast timeout (600ms) so scanner never lags
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 600);
+        try {
+            const resp = await fetch(`/api/product/${encodeURIComponent(prodVal)}`, {
+                signal: controller.signal,
+            });
+            if (resp.ok) {
+                const queryData = await resp.json();
+                return queryData.name || "";
+            }
+        } catch (error) {
+            // DB lookup offline or slow, proceed gracefully
+        } finally {
+            clearTimeout(timeoutId);
+        }
+        return "";
+    }
+
+    async function addNewRowFromModal() {
+        const prodVal = (modalInputProducto?.value || "").trim().replace(/'/g, "-");
+        const loteVal = (modalInputLote?.value || "").trim().replace(/'/g, "-").replace(/S$/i, "");
+        const kgVal = parseFloat(modalInputKg?.value) || 25;
+
+        // Target area from modal select or activeArea
+        const targetArea = normalizeArea(modalSelectArea?.value) || activeArea;
+        if (targetArea !== activeArea && targetArea !== "__NEW_LOCATION__") {
+            activeArea = targetArea;
+            safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+            renderActiveArea();
+            pushActiveAreaToServer(activeArea);
+            if (modalFooterArea) modalFooterArea.textContent = activeArea;
+        }
+
+        if (!prodVal) {
+            showModalFeedback("⚠️ Ingresa o escanea el Código de Producto.", true);
+            setModalStep(1);
+            modalInputProducto?.focus();
+            return;
+        }
+
+        if (!loteVal) {
+            showModalFeedback("⚠️ Falta escanear el Lote.", true);
+            setModalStep(2);
+            modalInputLote?.focus();
+            return;
+        }
+
+        // Instant input reset and step transition (Non-blocking: ready for next scan immediately)
+        if (modalInputProducto) modalInputProducto.value = "";
+        if (modalInputLote) modalInputLote.value = "";
+        setModalStep(1);
+        modalInputProducto?.focus();
+
+        // Audio & Visual confirmation immediately
+        playConfirmationBeep();
+        showModalFeedback(`⚡ Registrando: ${prodVal} (Lote: ${loteVal})...`);
+
+        // Check local cache for product name first
+        const localData = (typeof table !== "undefined" && table && table.getData) ? table.getData() : [];
+        const prevOccurence = localData.find(r => 
+            String(r.Producto).trim().toUpperCase() === prodVal.toUpperCase() && 
+            String(r.Nombre).trim() !== ""
+        );
+        let immediateName = prevOccurence ? prevOccurence.Nombre : "";
+
+        const rowId = Date.now() + Math.random();
+        const newRow = {
+            id: rowId,
+            Ubicacion: targetArea,
+            Producto: prodVal,
+            Nombre: immediateName,
+            Lote: loteVal,
+            KG: kgVal,
+            Comentarios: "",
+            Reservado: false,
+            _scannedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        };
+
+        // Add to active session immediately
+        sessionScannedRows.unshift(newRow);
+        renderSessionTable();
+
+        // Optimistic UI update on main table
+        table.updateOrAddData([newRow]);
+
+        // Background lookup & server push without blocking user input
+        (async () => {
+            let finalName = immediateName;
+            if (!finalName) {
+                finalName = await queryProductName(prodVal);
+                if (finalName) {
+                    newRow.Nombre = finalName;
+                    // Update session row reference
+                    const targetSessionRow = sessionScannedRows.find(r => r.id === rowId);
+                    if (targetSessionRow) targetSessionRow.Nombre = finalName;
+                    // Update table & modal display
+                    if (typeof table !== "undefined" && table.updateData) {
+                        table.updateData([{ id: rowId, Nombre: finalName }]);
+                    }
+                    renderSessionTable();
+                }
+            }
+
+            showModalFeedback(`✅ Registrado: ${prodVal} - ${finalName || 'Sin Nombre'} (Lote: ${loteVal})`);
+
+            // Send to server
+            fetch("/api/inventory/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ row: newRow, usuario: activeUser })
+            }).catch(err => console.error("Error al agregar fila:", err));
+        })();
+    }
+
+    // 6. Manual add from main screen
     async function addNewRow() {
-        // Si el operador cambio el area y no pulso "Asignar area",
-        // se sincroniza automaticamente antes de capturar la fila.
         syncAreaFromInputSilently();
 
         const prodVal = inputProducto.value.trim().replace(/'/g, "-");
@@ -927,94 +1848,248 @@ function _initApp() {
             return;
         }
 
-        // Consultar nombre del producto en la base de datos (para cualquier codigo)
-        let nombreProducto = "";
-        {
-            // Validar si ya escaneamos este producto antes (para re-usar su nombre cuando la BD no este disponible)
-            const localData = table.getData();
-            const prevOccurence = localData.find(r => 
-                String(r.Producto).trim().toUpperCase() === prodVal.toUpperCase() && 
-                String(r.Nombre).trim() !== ""
-            );
-
-            if (prevOccurence) {
-                // Reutilizamos el nombre que ya tenemos en memoria
-                nombreProducto = prevOccurence.Nombre;
-            } else {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-                try {
-                    const resp = await fetch(`/api/product/${encodeURIComponent(prodVal)}`, {
-                        signal: controller.signal,
-                    });
-
-                    if (resp.ok) {
-                        const queryData = await resp.json();
-                        nombreProducto = queryData.name || "";
-                    }
-                } catch (error) {
-                    console.error("Consulta de Base de Datos no disponible, se continua sin nombre:", error);
-                    nombreProducto = "";
-                } finally {
-                    clearTimeout(timeoutId);
-                }
-            }
-        }
-
-        const newRow = {
-            id: Date.now(),
-            Ubicacion: activeArea,
-            Producto: prodVal,
-            Nombre: nombreProducto,
-            Lote: loteVal,
-            KG: 25,
-            Comentarios: "",
-        };
-
-        // Optimistic UI update for immediate feedback
-        table.updateOrAddData([newRow]);
-        
-        // Send delta to server
-        fetch("/api/inventory/add", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ row: newRow, usuario: activeUser })
-        }).catch(err => console.error("Error al agregar fila:", err));
-
+        // Instant reset
         inputProducto.value = "";
         inputLote.value = "";
         inputProducto.focus();
+        playConfirmationBeep();
+
+        const localData = (typeof table !== "undefined" && table && table.getData) ? table.getData() : [];
+        const prevOccurence = localData.find(r => 
+            String(r.Producto).trim().toUpperCase() === prodVal.toUpperCase() && 
+            String(r.Nombre).trim() !== ""
+        );
+        let immediateName = prevOccurence ? prevOccurence.Nombre : "";
+
+        const rowId = Date.now() + Math.random();
+        const newRow = {
+            id: rowId,
+            Ubicacion: activeArea,
+            Producto: prodVal,
+            Nombre: immediateName,
+            Lote: loteVal,
+            KG: 25,
+            Comentarios: "",
+            Reservado: false,
+            _scannedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        };
+
+        sessionScannedRows.unshift(newRow);
+        table.updateOrAddData([newRow]);
+
+        // Background lookup & server push
+        (async () => {
+            let finalName = immediateName;
+            if (!finalName) {
+                finalName = await queryProductName(prodVal);
+                if (finalName) {
+                    newRow.Nombre = finalName;
+                    if (typeof table !== "undefined" && table.updateData) {
+                        table.updateData([{ id: rowId, Nombre: finalName }]);
+                    }
+                }
+            }
+
+            fetch("/api/inventory/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ row: newRow, usuario: activeUser })
+            }).catch(err => console.error("Error al agregar fila:", err));
+        })();
     }
 
-    // 6. Handling the Scanners (Enter Key logic)
-    inputProducto.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") {
+    // 7. Modal and Scanner Event Listeners with Intelligent Burst Detection & Multi-Key Support
+    let modalProdBurstTimer = null;
+    let modalLoteBurstTimer = null;
+    let mainProdBurstTimer = null;
+
+    btnOpenScannerModal?.addEventListener("click", () => {
+        // Sync active user if typed in main input
+        if (inputUsuario && inputUsuario.value.trim()) {
+            activeUser = normalizeUser(inputUsuario.value.trim());
+            safeStorageSet(ACTIVE_USER_KEY, activeUser);
+            renderActiveUser();
+        }
+        // Sync active area if typed in search input
+        const currentAreaVal = normalizeArea(selectArea ? selectArea.value : "");
+        if (currentAreaVal && currentAreaVal !== activeArea) {
+            activeArea = currentAreaVal;
+            safeStorageSet(ACTIVE_AREA_KEY, activeArea);
+            renderActiveArea();
+            pushActiveAreaToServer(activeArea);
+        }
+        openScannerModal();
+    });
+    modalBtnClose?.addEventListener("click", () => closeScannerModal(true));
+    modalBtnDone?.addEventListener("click", () => closeScannerModal(true));
+
+    modalBtnClearSession?.addEventListener("click", () => {
+        if (sessionScannedRows.length === 0) return;
+        sessionScannedRows = [];
+        renderSessionTable();
+        showModalFeedback("Lista de sesión limpiada");
+        modalInputProducto?.focus();
+    });
+
+    // Click anywhere on Step 1 or Step 2 box to switch focus
+    stepColProducto?.addEventListener("click", () => {
+        setModalStep(1);
+        modalInputProducto?.focus();
+        modalInputProducto?.select();
+    });
+
+    stepColLote?.addEventListener("click", () => {
+        setModalStep(2);
+        modalInputLote?.focus();
+        modalInputLote?.select();
+    });
+
+    function advanceToStep2() {
+        const val = modalInputProducto?.value?.trim() || "";
+        if (val !== "") {
+            setModalStep(2);
+            modalInputLote?.focus();
+            modalInputLote?.select();
+        }
+    }
+
+    // Modal Product Input Listeners
+    modalInputProducto?.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === "Tab" || e.keyCode === 13 || e.keyCode === 9) {
             e.preventDefault();
-            if (inputProducto.value.trim() !== "") {
-                inputLote.focus();
-            }
+            clearTimeout(modalProdBurstTimer);
+            advanceToStep2();
         }
     });
 
-    inputLote.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") {
+    modalInputProducto?.addEventListener("input", function () {
+        clearTimeout(modalProdBurstTimer);
+        const val = (this.value || "").trim();
+        // If scanner inputs a full barcode (>3 chars) and pauses for 350ms without Enter, auto-advance to Step 2
+        if (val.length >= 3) {
+            modalProdBurstTimer = setTimeout(() => {
+                if (modalInputProducto && modalInputProducto.value.trim().length >= 3 && stepColProducto?.classList.contains("active")) {
+                    advanceToStep2();
+                }
+            }, 350);
+        }
+    });
+
+    // Modal Lote Input Listeners
+    modalInputLote?.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === "Tab" || e.keyCode === 13 || e.keyCode === 9) {
+            e.preventDefault();
+            clearTimeout(modalLoteBurstTimer);
+            addNewRowFromModal();
+        }
+    });
+
+    modalInputLote?.addEventListener("input", function () {
+        clearTimeout(modalLoteBurstTimer);
+        const val = (this.value || "").trim();
+        // If scanner inputs a full batch (>2 chars) and pauses for 350ms without Enter, auto-submit
+        if (val.length >= 2) {
+            modalLoteBurstTimer = setTimeout(() => {
+                if (modalInputLote && modalInputLote.value.trim().length >= 2 && stepColLote?.classList.contains("active")) {
+                    addNewRowFromModal();
+                }
+            }, 350);
+        }
+    });
+
+    modalBtnAdd?.addEventListener("click", addNewRowFromModal);
+
+
+    // Note: selectArea and modalSelectArea change handling is now done
+    // by the searchableMain and searchableModal combobox instances above.
+
+
+    // Auto-open modal on full barcode scan / Enter / Tab from main screen
+    inputProducto?.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === "Tab" || e.keyCode === 13 || e.keyCode === 9) {
+            e.preventDefault();
+            clearTimeout(mainProdBurstTimer);
+            const val = inputProducto.value.trim();
+            inputProducto.value = "";
+            openScannerModal(val);
+        }
+    });
+
+    inputProducto?.addEventListener("input", function () {
+        clearTimeout(mainProdBurstTimer);
+        const val = (this.value || "").trim();
+        // If barcode scanned on main screen without Enter key, auto-open modal after 350ms
+        if (val.length >= 3 && !isScannerModalOpen) {
+            mainProdBurstTimer = setTimeout(() => {
+                if (inputProducto && inputProducto.value.trim().length >= 3 && !isScannerModalOpen) {
+                    const scannedVal = inputProducto.value.trim();
+                    inputProducto.value = "";
+                    openScannerModal(scannedVal);
+                }
+            }, 350);
+        }
+    });
+
+    inputLote?.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === "Tab" || e.keyCode === 13 || e.keyCode === 9) {
             e.preventDefault();
             addNewRow();
         }
     });
 
-    btnAdd.addEventListener("click", addNewRow);
-    btnSetArea.addEventListener("click", setActiveArea);
-
-    inputArea.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") {
+    // Global Key shortcuts & Smart barcode scanner listener
+    window.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && isScannerModalOpen) {
+            closeScannerModal(true);
+            return;
+        }
+        if (e.key === "F2" && !isScannerModalOpen) {
             e.preventDefault();
-            setActiveArea();
+            openScannerModal();
+            return;
+        }
+
+        // Ignore modifier / navigation keys
+        if (e.ctrlKey || e.altKey || e.metaKey || e.key === "Tab" || e.key === "Shift" || e.key === "Control" || e.key === "Alt" || e.key === "CapsLock") {
+            return;
+        }
+
+        const activeEl = document.activeElement;
+        const isInputFocused = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT");
+
+        if (isScannerModalOpen) {
+            // When modal is open: if focus is NOT on the active modal scan input (and not in area search)
+            const isSearchableSelectFocused = activeEl === modalSelectAreaSearch;
+            const isModalScanInput = activeEl === modalInputProducto || activeEl === modalInputLote || activeEl === modalInputKg;
+
+            if (!isModalScanInput && !isSearchableSelectFocused) {
+                const targetInput = (stepColLote && stepColLote.classList.contains("active")) ? modalInputLote : modalInputProducto;
+                if (targetInput) {
+                    targetInput.focus();
+                    if (e.key.length === 1) {
+                        targetInput.value += e.key;
+                        targetInput.dispatchEvent(new Event("input", { bubbles: true }));
+                        e.preventDefault();
+                    }
+                }
+            }
+        } else {
+            // When modal is closed: if focus is not in search/user input, redirect keystrokes directly to inputProducto
+            const isMainAppInput = activeEl === inputSearch || activeEl === inputUsuario || activeEl === selectAreaSearch;
+            if (!isMainAppInput && e.key.length === 1) {
+                inputProducto?.focus();
+                inputProducto.value += e.key;
+                inputProducto.dispatchEvent(new Event("input", { bubbles: true }));
+                e.preventDefault();
+            }
         }
     });
 
-    inputArea.addEventListener("blur", syncAreaFromInputSilently);
+    btnAdd.addEventListener("click", addNewRow);
+    btnSetArea?.addEventListener("click", setActiveArea);
+    btnDeleteArea?.addEventListener("click", () => promptDeleteLocation(selectArea));
+    modalBtnDeleteArea?.addEventListener("click", () => promptDeleteLocation(modalSelectArea));
+
     inputUsuario.addEventListener("blur", syncUserFromInput);
     inputUsuario.addEventListener("keydown", function (e) {
         if (e.key === "Enter") {

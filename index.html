@@ -19,37 +19,58 @@
     </div>
 
     <div class="main-container">
-        <div class="header-container">
+        <header class="header-container">
             <div class="brand-area">
                 <img src="logo_qb.png" alt="Logo" class="logo">
-                <h1>QB-WMS — Captura de Inventario</h1>
+                <div class="brand-text">
+                    <div class="brand-title-wrap">
+                        <h1>QB-WMS</h1>
+                        <span class="version-badge">v2.0</span>
+                    </div>
+                    <p class="brand-subtitle">Captura y Control de Inventario en Tiempo Real</p>
+                </div>
             </div>
             <div class="actions">
-                <span id="sync-status" class="sync-status sync-connecting">Sync...</span>
-                <button id="btn-export" class="btn-primary">
-                    <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    Exportar a Excel (.xlsx)
+                <span id="sync-status" class="sync-status sync-connecting">
+                    <span class="sync-dot"></span>
+                    <span class="sync-label">Sync...</span>
+                </span>
+                <button id="btn-export" class="btn-export" title="Descargar inventario en formato Excel">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Exportar Excel
                 </button>
             </div>
-        </div>
+        </header>
 
-        <div class="scanner-section" style="position: relative;">
-            <div id="warning-peticiones" class="hidden" style="position: absolute; right: 30px; top: 25px; max-width: 340px; padding: 10px; background-color: #fef2f2; border-left: 4px solid #ef4444; border-radius: 4px; color: #991b1b; font-size: 0.9em; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                <strong>Aviso:</strong> Hay peticiones sin atender.
+        <section class="scanner-section" style="position: relative;">
+            <div id="warning-peticiones" class="hidden warning-toast">
+                <span class="toast-icon">⚠️</span>
+                <span><strong>Aviso:</strong> Hay peticiones sin atender.</span>
             </div>
-            <h2>Área de Escaneo</h2>
-            <small class="scanner-hint">El escáner automático pasará de Producto a Lote y agregará el registro directo a la tabla.</small>
+            
+            <div class="scanner-section-header">
+                <div>
+                    <h2>Área de Escaneo</h2>
+                    <small class="scanner-hint">Modo continuo: El lector pasa automáticamente de Producto a Lote y registra a la tabla.</small>
+                </div>
+            </div>
 
             <div class="area-controls">
                 <div class="input-group area-group">
-                    <label for="input-area">Área actual</label>
-                    <input type="text" id="input-area" placeholder="Ejemplo: A1" autocomplete="off">
+                    <label for="select-area">Ubicación destino</label>
+                    <div class="area-select-row">
+                        <div class="searchable-select-wrap" id="wrap-select-area">
+                            <input type="text" id="select-area-search" class="area-select searchable-select-input" placeholder="Buscar ubicación..." autocomplete="off">
+                            <input type="hidden" id="select-area">
+                            <div class="searchable-select-dropdown" id="dropdown-select-area"></div>
+                        </div>
+                        <button type="button" id="btn-delete-area" class="btn-delete-loc" title="Eliminar ubicación seleccionada">🗑️</button>
+                    </div>
                 </div>
-                <div class="input-group area-group">
-                    <label for="input-usuario">Usuario actual</label>
+                <div class="input-group area-group user-group">
+                    <label for="input-usuario">Usuario / Operador</label>
                     <input type="text" id="input-usuario" placeholder="Ejemplo: Almacen1" autocomplete="off">
                 </div>
-                <button id="btn-set-area" class="btn-area">Asignar área</button>
                 <div class="area-badge-wrap">
                     <span class="area-badge-label">Área activa:</span>
                     <span id="current-area" class="area-badge">SIN AREA</span>
@@ -65,26 +86,47 @@
                     <label for="input-lote">2. Lote</label>
                     <input type="text" id="input-lote" placeholder="Escanea el código de lote..." autocomplete="off">
                 </div>
-                <button id="btn-add" class="btn-add">
-                    <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-                    Agregar Manualmente
+                <button id="btn-add" class="btn-add" title="Agregar manualmente (Enter)">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    Agregar Manual
+                </button>
+                <button id="btn-open-scanner-modal" class="btn-modal-trigger" title="Abrir ventana de captura rápida en tiempo real (F2)">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg>
+                    ⚡ Modo Escáner (Pop-up) <kbd class="kbd-hint">F2</kbd>
                 </button>
             </div>
-        </div>
+        </section>
 
-        <div class="tabs-container">
-            <button id="tab-inventory" class="tab-btn active">Inventario</button>
-            <button id="tab-reserved" class="tab-btn">Reservados</button>
-            <button id="tab-peticiones" class="tab-btn">Peticiones</button>
-            <button id="tab-historial" class="tab-btn">Historial</button>
-        </div>
+        <nav class="tabs-container">
+            <button id="tab-inventory" class="tab-btn active">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                Inventario
+            </button>
+            <button id="tab-reserved" class="tab-btn">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                Reservados
+            </button>
+            <button id="tab-peticiones" class="tab-btn">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+                Peticiones
+            </button>
+            <button id="tab-historial" class="tab-btn">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Historial
+            </button>
+        </nav>
 
         <div id="view-inventory" class="table-container">
             <div class="table-search-bar">
-                <label for="input-search">Buscar</label>
-                <div class="table-search-actions">
+                <div class="search-input-wrap">
+                    <svg class="search-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                     <input type="text" id="input-search" placeholder="Buscar por Ubicación, Producto, Nombre o Lote..." autocomplete="off">
-                    <button id="btn-delete-selected" class="btn-danger-outline" disabled>❌ Eliminar Seleccionados</button>
+                </div>
+                <div class="table-search-actions">
+                    <button id="btn-delete-selected" class="btn-danger-outline" disabled>
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        Eliminar Seleccionados
+                    </button>
                 </div>
             </div>
             <div id="inventory-table"></div>
@@ -117,6 +159,135 @@
 
         <div id="view-historial" class="table-container hidden">
             <div id="historial-table"></div>
+        </div>
+    </div>
+
+    <!-- Scanner Real-Time Modal -->
+    <div id="scanner-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-header-title">
+                    <div class="modal-pulse-icon">
+                        <svg width="26" height="26" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg>
+                    </div>
+                    <div>
+                        <h2>Captura de Inventario en Tiempo Real</h2>
+                        <p class="modal-subtitle">Modo de escaneo continuo: 1. Producto ➔ 2. Lote</p>
+                    </div>
+                </div>
+                <div class="modal-header-meta">
+                    <div class="modal-meta-item">
+                        <label for="modal-select-area">Ubicación destino:</label>
+                        <div class="modal-area-input-wrap">
+                            <div class="searchable-select-wrap" id="wrap-modal-select-area">
+                                <input type="text" id="modal-select-area-search" class="modal-area-select searchable-select-input" placeholder="Buscar..." autocomplete="off">
+                                <input type="hidden" id="modal-select-area">
+                                <div class="searchable-select-dropdown" id="dropdown-modal-select-area"></div>
+                            </div>
+                            <button type="button" id="modal-btn-delete-area" class="btn-delete-loc-modal" title="Eliminar ubicación seleccionada">🗑️</button>
+                        </div>
+                    </div>
+                    <div class="modal-meta-item">
+                        <span class="meta-label">Usuario:</span>
+                        <span id="modal-badge-user" class="meta-badge-user">Almacen1</span>
+                    </div>
+                    <button id="modal-btn-close" class="modal-close-btn" title="Cerrar modal (Esc)">✕</button>
+                </div>
+            </div>
+
+            <div class="modal-body">
+                <!-- Stepper inputs -->
+                <div class="modal-stepper-box">
+                    <div class="modal-step-col active" id="step-col-producto">
+                        <div class="step-indicator-tag">Paso 1</div>
+                        <label for="modal-input-producto">1. Código de Producto</label>
+                        <div class="input-with-icon">
+                            <input type="text" id="modal-input-producto" placeholder="Escanea código de producto..." autocomplete="off">
+                            <span class="scanner-status-dot"></span>
+                        </div>
+                    </div>
+
+                    <div class="modal-step-arrow">
+                        <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
+                    </div>
+
+                    <div class="modal-step-col" id="step-col-lote">
+                        <div class="step-indicator-tag">Paso 2</div>
+                        <label for="modal-input-lote">2. Lote</label>
+                        <div class="input-with-icon">
+                            <input type="text" id="modal-input-lote" placeholder="Escanea código de lote..." autocomplete="off">
+                            <span class="scanner-status-dot"></span>
+                        </div>
+                    </div>
+
+                    <div class="modal-step-col modal-col-kg">
+                        <label for="modal-input-kg">KG</label>
+                        <input type="number" id="modal-input-kg" value="25" min="1" step="any">
+                    </div>
+
+                    <button id="modal-btn-add" class="btn-modal-add" title="Agregar producto escaneado">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        Registrar
+                    </button>
+                </div>
+
+                <!-- Live Feedback Flash Bar -->
+                <div id="modal-feedback-bar" class="modal-feedback-bar hidden">
+                    <span id="modal-feedback-text">✅ Producto escaneado exitosamente</span>
+                </div>
+
+                <!-- Real-Time Scanned List Table -->
+                <div class="modal-feed-header">
+                    <div class="modal-feed-title">
+                        <h3>Productos Escaneados en esta Sesión</h3>
+                        <span id="modal-session-count" class="modal-count-badge">0 escaneados</span>
+                    </div>
+                    <div class="modal-feed-actions">
+                        <button id="modal-btn-clear-session" class="btn-text-danger" title="Limpiar lista de esta sesión">
+                            🗑️ Limpiar lista
+                        </button>
+                    </div>
+                </div>
+
+                <div class="modal-table-wrap">
+                    <table class="modal-scanned-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px; text-align: center;">#</th>
+                                <th style="width: 90px;">Hora</th>
+                                <th style="width: 100px;">Ubicación</th>
+                                <th style="width: 150px;">Código</th>
+                                <th>Nombre / Descripción</th>
+                                <th style="width: 130px;">Lote</th>
+                                <th style="width: 75px; text-align: right;">KG</th>
+                                <th style="width: 65px; text-align: center;">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-scanned-tbody">
+                            <!-- Injected via JS -->
+                        </tbody>
+                    </table>
+                    <div id="modal-empty-state" class="modal-empty-state">
+                        <div class="empty-icon">📦</div>
+                        <p class="empty-title">Listo para escanear en tiempo real</p>
+                        <p class="empty-desc">Escanea el <strong>Código de Producto</strong> y luego el <strong>Lote</strong> con tu pistola lectora.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <div class="modal-footer-stats">
+                    <span>Sesión activa en: <strong id="modal-footer-area">--</strong></span>
+                    <span class="separator">•</span>
+                    <span>Total sesión: <strong id="modal-footer-total">0 tambos</strong></span>
+                </div>
+                <div class="modal-footer-buttons">
+                    <button id="modal-btn-done" class="btn-primary">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        Finalizar y Cerrar (Esc)
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
